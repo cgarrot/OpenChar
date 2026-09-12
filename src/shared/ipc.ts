@@ -341,6 +341,7 @@ export const IpcChannels = {
     setThinking: 'chat:setThinking',
     models: 'chat:models',
     stats: 'chat:stats',
+    transcribe: 'chat:transcribe',
     addRef: 'chat:addRef',
     removeRef: 'chat:removeRef',
   },
@@ -1000,6 +1001,12 @@ export interface InlineStudioApi {
     models(tabId: string): Promise<Result<ChatModelInfo[]>>
     /** Token/cost/context usage of the tab's session. */
     stats(tabId: string): Promise<Result<ChatSessionStats>>
+    /** Browser audio (base64) -> transcript, via the pi-voice-stt provider config. */
+    transcribe(input: {
+      data: string
+      mimeType?: string
+      language?: string
+    }): Promise<Result<{ text: string }>>
     /** Add a persistent reference (dir or file) prepended as context to every prompt. */
     addRef(tabId: string, path: string): Promise<Result<ChatTab>>
     removeRef(tabId: string, path: string): Promise<Result<ChatTab>>

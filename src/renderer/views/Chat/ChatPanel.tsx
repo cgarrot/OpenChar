@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useChatStore, type ThreadEntry, type ToolCard } from '../../store/chatStore'
+import { studio } from '../../lib/studio'
 import { useUiStore } from '../../store/uiStore'
 import { useMoodboardStore } from '../../store/moodboardStore'
 
@@ -314,6 +315,110 @@ function StatsFooter(): React.JSX.Element | null {
   )
 }
 
+/** Microphone dictation: record in-browser, transcribe through Core (pi-voice-stt config). */
+function useDictation(onError: (message: string) => void): {
+  recording: boolean
+  seconds: number
+  busy: boolean
+  toggle: () => void
+} {
+  const [recording, setRecording] = useState(false)
+  const [seconds, setSeconds] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const timerRef = useRef<number | null>(null)
+  const stopRef = useRef<(send: boolean) => void>(() => {})
+
+  const stopTimer = (): void => {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+  }
+
+  const transcribe = async (blob: Blob): Promise<void> => {
+    setBusy(true)
+    try {
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onloadend = (): void => resolve(String(reader.result).split(',')[1] ?? '')
+        reader.onerror = (): void => reject(new Error('lecture audio impossible'))
+        reader.readAsDataURL(blob)
+      })
+      const res = await studio().chat.transcribe({
+        data,
+        mimeType: blob.type || 'audio/webm',
+      })
+      if (!res.ok) {
+        onError(res.error && typeof res.error === 'string' ? res.error : 'transcription échouée')
+        return
+      }
+      const text = res.value.text
+      if (text) useChatStore.getState().setDraft((useChatStore.getState().draft + text).trimStart())
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const stop = (send: boolean): void => {
+    const recorder = recorderRef.current
+    if (!recorder) return
+    recorderRef.current = null
+    stopTimer()
+    setRecording(false)
+    recorder.onstop = (): void => {
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+      recorder.stream.getTracks().forEach((t) => t.stop())
+      if (send && blob.size > 0) void transcribe(blob)
+    }
+    recorder.stop()
+  }
+  stopRef.current = stop
+
+  const toggle = (): void => {
+    if (recorderRef.current) {
+      stop(true)
+      return
+    }
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        const recorder = new MediaRecorder(stream)
+        chunksRef.current = []
+        recorder.ondataavailable = (e): void => {
+          if (e.data.size > 0) chunksRef.current.push(e.data)
+        }
+        recorder.start(250)
+        recorderRef.current = recorder
+        setSeconds(0)
+        setRecording(true)
+        timerRef.current = window.setInterval(() => {
+          setSeconds((s) => {
+            if (s >= 119) stop(true)
+            return s + 1
+          })
+        }, 1000)
+      })
+      .catch(() => onError('micro inaccessible — autorisez le micro pour 127.0.0.1'))
+  }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && recorderRef.current) stopRef.current(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      stopTimer()
+    }
+  }, [])
+
+  return { recording, seconds, busy, toggle }
+}
+
 export function ChatDock({
   onClose,
   collapsed,
@@ -347,6 +452,8 @@ export function ChatDock({
   const setFolder = useChatStore((s) => s.setFolder)
   const appendSelectionContext = useChatStore((s) => s.appendSelectionContext)
   const folder = useChatStore((s) => s.folder)
+
+  const dictation = useDictation((message) => useChatStore.setState({ error: message }))
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -571,6 +678,29 @@ export function ChatDock({
             >
               📎
             </button>
+            <button
+              onClick={dictation.toggle}
+              className={`relative rounded px-1.5 py-0.5 text-[11px] ${
+                dictation.recording
+                  ? 'bg-red-500/20 text-red-300'
+                  : dictation.busy
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : 'text-zinc-400 hover:bg-panel hover:text-white'
+              }`}
+              title={
+                dictation.recording
+                  ? 'Enregistrement… re-clique pour transcrire (Échap annule)'
+                  : 'Dicter (micro → transcription)'
+              }
+            >
+              {dictation.busy ? '…' : '🎤'}
+              {dictation.recording && (
+                <span className="absolute -right-1 -top-1 h-2 w-2 animate-pulse rounded-full bg-red-400" />
+              )}
+            </button>
+            {dictation.recording && (
+              <span className="text-[11px] tabular-nums text-red-300">{dictation.seconds}s</span>
+            )}
             <button
               onClick={() => appendSelectionContext()}
               className="rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-panel hover:text-white"

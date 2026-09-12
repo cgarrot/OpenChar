@@ -20,6 +20,8 @@ import os
 import re
 import shutil
 import time
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
@@ -106,6 +108,15 @@ class _Tab:
             "refs": self.refs, "thinking": self.thinking,
             "sessionFile": self.session_file,
         }
+
+
+#: Provider families the dock's transcription reuses — same config file as pi-voice-stt.
+_STT_ENDPOINTS = {
+    "mistral": "https://api.mistral.ai/v1/audio/transcriptions",
+    "openai": "https://api.openai.com/v1/audio/transcriptions",
+    "groq": "https://api.groq.com/openai/v1/audio/transcriptions",
+}
+_STT_KEY_ENV = {"mistral": "MISTRAL_API_KEY", "openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY"}
 
 
 class ChatBridge:
@@ -271,6 +282,136 @@ class ChatBridge:
             return {"available": False}
         data = await self._command(tab, {"type": "get_session_stats"})
         return {"available": True, **(data if isinstance(data, dict) else {})}
+
+    # --- transcription (dictée) -----------------------------------------------------------------
+
+    def _stt_config(self) -> dict[str, Any]:
+        """The provider block from ~/.pi/agent/stt.json (pi-voice-stt's config), best-effort."""
+        import contextlib as _ctx
+
+        path = Path.home() / ".pi" / "agent" / "stt.json"
+        with _ctx.suppress(OSError, ValueError):
+            cfg = json.loads(path.read_text(encoding="utf-8"))
+            profile = str(cfg.get("profile") or "")
+            if profile and isinstance(cfg.get("profiles"), dict):
+                override = cfg["profiles"].get(profile)
+                if isinstance(override, dict):
+                    merged = {**cfg, **override}
+                    merged["profiles"] = cfg["profiles"]
+                    cfg = merged
+            if isinstance(cfg.get("provider"), dict):
+                return cfg
+        return {}
+
+    async def transcribe(self, inp: dict[str, Any]) -> dict[str, Any]:
+        """Browser audio (base64) -> transcript, via the pi-voice-stt provider config.
+        Supports the OpenAI-compatible multipart family (mistral/openai/groq/openai-compatible)."""
+        import binascii
+        import uuid as _uuid
+
+        data = str((inp or {}).get("data", ""))
+        if not data:
+            raise ChatError("Aucun audio reçu.")
+        try:
+            audio = base64.b64decode(data, validate=False)
+        except (binascii.Error, ValueError) as error:
+            raise ChatError(f"Audio illisible : {error}") from None
+
+        cfg = self._stt_config()
+        provider = dict(cfg.get("provider") or {})
+        kind = str(provider.get("type", "mistral"))
+        if kind not in _STT_ENDPOINTS and kind != "openai-compatible":
+            raise ChatError(
+                f"Provider STT « {kind} » non supporté par le dock (mistral/openai/groq/"
+                "openai-compatible). Dictée TUI : Ctrl+R."
+            )
+        endpoint = str(provider.get("endpoint") or _STT_ENDPOINTS.get(kind, ""))
+        if not endpoint:
+            raise ChatError("Aucun endpoint STT configuré (~/.pi/agent/stt.json → provider.endpoint).")
+
+        key = str(provider.get("apiKey") or "")
+        if not key:
+            env_name = str(provider.get("apiKeyEnv") or _STT_KEY_ENV.get(kind, ""))
+            key = os.environ.get(env_name, "").strip()
+        if not key and provider.get("apiKeyFile"):
+            key = self._read_key_file(
+                Path(str(provider["apiKeyFile"])).expanduser(),
+                str(provider.get("apiKeyEnv") or _STT_KEY_ENV.get(kind, "")),
+            )
+        if not key:
+            raise ChatError(
+                "Clé STT introuvable (provider.apiKey / apiKeyEnv / apiKeyFile dans stt.json)."
+            )
+
+        model = str(provider.get("model") or "")
+        if not model:
+            raise ChatError("Aucun modèle STT configuré (provider.model dans stt.json).")
+        language = str((inp.get("language") or provider.get("language") or "")).strip() or None
+        mime = str(inp.get("mimeType") or "audio/webm")
+        ext = {"audio/ogg": ".ogg", "audio/webm": ".webm", "audio/mp4": ".m4a",
+               "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav"}.get(
+                   mime.split(";")[0].strip(), ".webm")
+
+        boundary = "----opencharstt" + _uuid.uuid4().hex
+        fields = {"model": model, "file": (f"recording{ext}", audio, mime.split(";")[0])}
+        if language:
+            fields["language"] = language
+        body = bytearray()
+        for name, value in fields.items():
+            body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"".encode())
+            if isinstance(value, tuple):
+                filename, blob, file_mime = value
+                body += f"; filename=\"{filename}\"\r\nContent-Type: {file_mime}\r\n\r\n".encode()
+                body += blob + b"\r\n"
+            else:
+                body += f"\r\n\r\n{value}\r\n".encode()
+        body += f"--{boundary}--\r\n".encode()
+
+        request = urllib.request.Request(
+            endpoint, data=bytes(body), method="POST",
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json",
+                     "Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        loop = asyncio.get_running_loop()
+
+        def _post() -> dict[str, Any]:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return json.loads(response.read() or b"{}")
+
+        try:
+            payload = await loop.run_in_executor(None, _post)
+        except urllib.error.HTTPError as error:
+            raise ChatError(f"STT HTTP {error.code} : {error.read().decode('utf-8', 'replace')[:200]}") from None
+        text = str((payload or {}).get("text", "")).strip()
+        if not text:
+            raise ChatError("Transcription vide (audio silencieux ?).")
+        if (cfg.get("output") or {}).get("appendTrailingSpace", True):
+            text += " "
+        return {"text": text}
+
+    @staticmethod
+    def _read_key_file(path: Path, env_name: str) -> str:
+        """pi-voice-stt's key-file semantics: a raw key, or an .env file where the line
+        `NAME=value` (optionally `export`-prefixed, quoted values) matching env_name wins."""
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+        if not raw:
+            return ""
+        if "=" not in raw:
+            return raw
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):].strip()
+            name, sep, value = line.partition("=")
+            if not sep or name.strip() != env_name:
+                continue
+            return value.strip().strip('"').strip("'")
+        return ""
 
     def add_ref(self, tab_id: str, path: str) -> dict[str, Any]:
         tab = self._tab(tab_id)
@@ -605,5 +746,6 @@ def register_chat_handlers(rpc: Any, chat: ChatBridge) -> None:
     reg("chat:setThinking", lambda tab_id, level: chat.set_thinking(tab_id, level))
     reg("chat:models", lambda tab_id: chat.models(tab_id))
     reg("chat:stats", lambda tab_id: chat.stats(tab_id))
+    reg("chat:transcribe", lambda inp: chat.transcribe(inp))
     reg("chat:addRef", lambda tab_id, path: chat.add_ref(tab_id, path))
     reg("chat:removeRef", lambda tab_id, path: chat.remove_ref(tab_id, path))
