@@ -18,7 +18,7 @@ export interface ToolCard {
 }
 
 export type ThreadEntry =
-  | { kind: 'user'; text: string; images: string[] }
+  | { kind: 'user'; text: string; images: string[]; contextNote?: string; entryId?: string }
   | { kind: 'assistant'; text: string; streaming: boolean }
   | { kind: 'tools'; cards: ToolCard[] }
 
@@ -33,6 +33,10 @@ interface ChatState {
   pending: Array<{ file: File; url: string }>
   /** A folder whose tree listing will be prepended as agent context on the next send. */
   folder: string | null
+  /** Edit-and-resend state: the entry being rewritten (fork) while composing. */
+  editing: { entryId: string; original: string } | null
+  startEditing: (entryId: string, original: string) => void
+  cancelEditing: () => void
   /** Model catalogue for the picker, per tab (loaded on demand). */
   models: ChatModelInfo[]
 
@@ -102,6 +106,21 @@ function selectionContext(): string | null {
   return `[Contexte canvas — sélection actuelle]\n${JSON.stringify({ items, links }, null, 1).slice(0, 4000)}`
 }
 
+/** Split a stored user message into display text + a context note (refs/selection blocks
+ * are agent food, not something to re-read in the bubble). */
+function splitContext(raw: string): { text: string; note: string } {
+  const parts = raw.split('\n---\n')
+  const tail = (parts.pop() ?? '').replace(/^\(Demande utilisateur[:]?\)\s*/i, '').trim()
+  const bits: string[] = []
+  for (const part of parts) {
+    const folder = part.match(/^\[Contexte dossier:\s*(.+?)\]/m)
+    if (folder) bits.push(`dossier ${folder[1].split('/').filter(Boolean).pop()}`)
+    else if (part.includes('[Contexte canvas')) bits.push('sélection canvas')
+    else if (part.startsWith('[Référence')) bits.push('référence fichier')
+  }
+  return { text: tail, note: bits.join(' · ') }
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   tabs: [],
   activeId: null,
@@ -111,11 +130,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
   pending: [],
   folder: null,
+  /** Edit-and-resend state: the entry being rewritten (fork) while composing. */
+  editing: null as { entryId: string; original: string } | null,
   /** Model catalogue for the picker, per tab (loaded on demand). */
   models: [] as ChatModelInfo[],
   stats: null as ChatSessionStats | null,
 
   subscribeToEvents: () => {
+    // Agent-side canvas mutations push a board refresh, so the user watches the work live.
+    const offBoard = studio().events.onBoardChanged(() => {
+      void useMoodboardStore.getState().load()
+    })
     const off = studio().events.onChat((event: ChatEvent) => {
       const { tabs, threads, activeId } = get()
       // A state frame carries nothing else; refetch the tab list for the badge.
@@ -201,7 +226,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         set({ error: event.error, tabs, activeId })
       }
     })
-    return off
+    return () => {
+      off()
+      offBoard()
+    }
   },
 
   loadTabs: async () => {
@@ -226,9 +254,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return
     }
     const entries: ThreadEntry[] = []
-    for (const m of res.value.messages) {
+    const rawMessages = res.value.messages as Array<{
+      role: string
+      text: string
+      tools?: Array<{ tool: string; input: unknown }>
+      entryId?: string
+    }>
+    for (const m of rawMessages) {
       if (m.role === 'user' && m.text) {
-        entries.push({ kind: 'user', text: m.text, images: m.images ?? [] })
+        const { text, note } = splitContext(m.text)
+        entries.push({
+          kind: 'user',
+          text: text || m.text.slice(0, 80),
+          images: [],
+          contextNote: note || undefined,
+          entryId: m.entryId,
+        })
       } else if (m.role === 'assistant') {
         if (m.tools?.length)
           entries.push({ kind: 'tools', cards: m.tools.map((t) => ({ ...t, running: false })) })
@@ -279,6 +320,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setFolder: (folder) => set({ folder: folder || null }),
+
+  startEditing: (entryId: string, original: string) =>
+    set({ editing: { entryId, original }, draft: original, error: null }),
+
+  cancelEditing: () => set({ editing: null, draft: '' }),
 
   setModel: async (tabId, model) => {
     const res = await studio().chat.setModel(tabId, model)

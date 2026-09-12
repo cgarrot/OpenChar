@@ -483,7 +483,16 @@ def create_app(
             return JSONResponse({"ok": False, "error": "Missing 'channel'."})
         if not isinstance(args, list):
             return JSONResponse({"ok": False, "error": "'args' must be a list."})
-        return JSONResponse(await rpc.dispatch(channel, args))
+        result = await rpc.dispatch(channel, args)
+        # An agent-side mutation (the openchar Pi extension sends x-agent): the canvas did not
+        # originate it, so push a board refresh — otherwise the user must reload to see the work.
+        if (
+            events is not None
+            and request.headers.get("x-agent")
+            and channel.startswith(("moodboard:", "generation:"))
+        ):
+            events.broadcast("events:boardChanged", {"source": "agent", "channel": channel})
+        return JSONResponse(result)
 
     @app.websocket("/events")
     async def studio_events(websocket: WebSocket) -> None:

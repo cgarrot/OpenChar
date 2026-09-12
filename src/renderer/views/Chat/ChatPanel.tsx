@@ -84,10 +84,16 @@ function ToolCardView({ tool, args, result, running }: ToolCard): React.JSX.Elem
   )
 }
 
-function EntryView({ entry }: { entry: ThreadEntry }): React.JSX.Element {
+function EntryView({
+  entry,
+  onEdit,
+}: {
+  entry: ThreadEntry
+  onEdit?: (text: string) => void
+}): React.JSX.Element {
   if (entry.kind === 'user') {
     return (
-      <div className="flex flex-col items-end gap-1">
+      <div className="group flex flex-col items-end gap-1">
         {!!entry.images.length && (
           <div className="flex gap-1">
             {entry.images.map((url) => (
@@ -98,6 +104,23 @@ function EntryView({ entry }: { entry: ThreadEntry }): React.JSX.Element {
         <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-zinc-700/60 px-3 py-2 text-sm text-zinc-100">
           {entry.text}
         </div>
+        {entry.contextNote && (
+          <span
+            className="max-w-[85%] truncate text-[10px] italic text-zinc-500"
+            title={`Contexte envoyé à l'agent : ${entry.contextNote}`}
+          >
+            ⟡ contexte : {entry.contextNote}
+          </span>
+        )}
+        {onEdit && entry.entryId && (
+          <button
+            onClick={() => onEdit(entry.text)}
+            className="hidden text-[10px] text-zinc-600 hover:text-zinc-300 group-hover:block"
+            title="Modifier et renvoyer (la conversation repart de ce message)"
+          >
+            ✎ modifier &amp; renvoyer
+          </button>
+        )}
       </div>
     )
   }
@@ -454,6 +477,9 @@ export function ChatDock({
   const folder = useChatStore((s) => s.folder)
 
   const dictation = useDictation((message) => useChatStore.setState({ error: message }))
+  const editing = useChatStore((s) => s.editing)
+  const startEditing = useChatStore((s) => s.startEditing)
+  const cancelEditing = useChatStore((s) => s.cancelEditing)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -613,9 +639,17 @@ export function ChatDock({
             nodes, les câbler, lancer des rendus, lire tes fichiers.
           </div>
         )}
-        {thread.map((entry, i) => (
-          <EntryView key={i} entry={entry} />
-        ))}
+        {thread.map((entry, i) =>
+          entry.kind === 'user' && entry.entryId && startEditing ? (
+            <EntryView
+              key={i}
+              entry={entry}
+              onEdit={() => startEditing(entry.entryId as string, entry.text)}
+            />
+          ) : (
+            <EntryView key={i} entry={entry} />
+          ),
+        )}
         {(activeState === 'streaming' || activeState === 'starting') && (
           <div className="flex items-center gap-2 px-1 text-[11px] text-zinc-400">
             <span className="flex gap-1">
@@ -663,6 +697,8 @@ export function ChatDock({
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
               void send()
+            } else if (e.key === 'Escape' && editing) {
+              cancelEditing()
             }
           }}
           placeholder="Demande à l'agent… (Entrée pour envoyer, images en glisser-déposer)"
@@ -671,6 +707,15 @@ export function ChatDock({
         />
         <div className="mt-1 flex items-center justify-between">
           <div className="flex items-center gap-0.5">
+            {editing && (
+              <button
+                onClick={cancelEditing}
+                className="mr-1 rounded bg-amber-500/20 px-2 py-0.5 text-[11px] text-amber-300 hover:bg-amber-500/30"
+                title="Annuler la modification (Échap)"
+              >
+                ✎ édition — annuler
+              </button>
+            )}
             <button
               onClick={() => fileRef.current?.click()}
               className="rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-panel hover:text-white"

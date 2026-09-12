@@ -54,6 +54,10 @@ Ground rules:
   ZERO tool calls.
 - Prefer the FEWEST actions that satisfy the request. Never add unrequested nodes, never
   "improve" the graph unprompted. Batch related changes into one turn.
+- PIPELINES: when asked to build one, chain EVERYTHING — every generator's output feeds the
+  next stage (a fusion node can take several images wired into its image input). Nothing left
+  isolated. Announce the plan in one short list BEFORE building, then build; the user watches
+  the canvas live.
 - NEVER read binary/media files (png/jpg/webp/mp4/mp3/wav/pdf/safetensors) with read — assets
   are data, not text. Rely on context, file names and sizes, or assets metadata.
 - Creating nodes: check graph_list_node_types once, then create; every tool returns the ids you
@@ -413,6 +417,31 @@ class ChatBridge:
             return value.strip().strip('"').strip("'")
         return ""
 
+    async def fork_resend(self, tab_id: str, entry_id: str, message: str) -> dict[str, Any]:
+        """Edit-and-resend: fork the session from a previous user message, then prompt the new
+        text — the conversation redoes from there on a fresh branch."""
+        tab = self._tab(tab_id)
+        await self._ensure_process(tab)
+        await self._command(tab, {"type": "fork", "entryId": str(entry_id)})
+        await self.prompt(tab_id, str(message))
+        return {"id": tab_id, "forked": True}
+
+    async def forkables(self, tab_id: str) -> list[dict[str, Any]]:
+        """User messages available for forking: (entryId, text) pairs."""
+        tab = self._tab(tab_id)
+        await self._ensure_process(tab)
+        data = await self._command(tab, {"type": "get_fork_messages"})
+        out: list[dict[str, Any]] = []
+        raw = data if isinstance(data, list) else (data or {}).get("messages") or (data or {}).get("entries") or []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            entry_id = item.get("entryId") or item.get("id")
+            text = item.get("text") or item.get("message")
+            if entry_id and text:
+                out.append({"entryId": str(entry_id), "text": str(text)})
+        return out
+
     def add_ref(self, tab_id: str, path: str) -> dict[str, Any]:
         tab = self._tab(tab_id)
         path = str(path).strip()
@@ -691,7 +720,7 @@ def _normalize_message(message: dict[str, Any]) -> dict[str, Any]:
     role = message.get("role", "?")
     blocks = message.get("content", [])
     if isinstance(blocks, str):
-        return {"role": role, "text": blocks, "tools": []}
+        return {"role": role, "text": blocks, "tools": [], "images": []}
     text_parts: list[str] = []
     tools: list[dict[str, Any]] = []
     images: list[str] = []
@@ -747,5 +776,7 @@ def register_chat_handlers(rpc: Any, chat: ChatBridge) -> None:
     reg("chat:models", lambda tab_id: chat.models(tab_id))
     reg("chat:stats", lambda tab_id: chat.stats(tab_id))
     reg("chat:transcribe", lambda inp: chat.transcribe(inp))
+    reg("chat:forkResend", lambda tab_id, entry_id, message: chat.fork_resend(tab_id, entry_id, message))
+    reg("chat:forkables", lambda tab_id: chat.forkables(tab_id))
     reg("chat:addRef", lambda tab_id, path: chat.add_ref(tab_id, path))
     reg("chat:removeRef", lambda tab_id, path: chat.remove_ref(tab_id, path))

@@ -342,6 +342,8 @@ export const IpcChannels = {
     models: 'chat:models',
     stats: 'chat:stats',
     transcribe: 'chat:transcribe',
+    forkResend: 'chat:forkResend',
+    forkables: 'chat:forkables',
     addRef: 'chat:addRef',
     removeRef: 'chat:removeRef',
   },
@@ -350,6 +352,8 @@ export const IpcChannels = {
     libraryChanged: 'events:libraryChanged',
     /** Main → renderer: Pi chat lifecycle (deltas, tool calls, state) per tab. */
     chat: 'events:chat',
+    /** Main → renderer: an agent-side mutation changed the board — refetch it. */
+    boardChanged: 'events:boardChanged',
     /** Main → renderer: director timeline render progress. */
     timelineProgress: 'events:timelineProgress',
     /** Main → renderer: fal generation lifecycle (per-node progress, node done, done, error). */
@@ -1007,6 +1011,14 @@ export interface InlineStudioApi {
       mimeType?: string
       language?: string
     }): Promise<Result<{ text: string }>>
+    /** Edit-and-resend: fork the session from a past user message, then prompt the new text. */
+    forkResend(
+      tabId: string,
+      entryId: string,
+      message: string,
+    ): Promise<Result<{ id: string; forked: boolean }>>
+    /** User messages available for forking: (entryId, text) pairs. */
+    forkables(tabId: string): Promise<Result<Array<{ entryId: string; text: string }>>>
     /** Add a persistent reference (dir or file) prepended as context to every prompt. */
     addRef(tabId: string, path: string): Promise<Result<ChatTab>>
     removeRef(tabId: string, path: string): Promise<Result<ChatTab>>
@@ -1018,6 +1030,8 @@ export interface InlineStudioApi {
     onLibraryChanged(callback: () => void): () => void
     /** Subscribe to Pi chat pushes (deltas, tool calls, state, errors). Unsubscribe fn. */
     onChat(callback: (e: ChatEvent) => void): () => void
+    /** Subscribe to "the agent changed the board" pushes; refetch the canvas. */
+    onBoardChanged(callback: (e: { source: string; channel: string }) => void): () => void
     /** Subscribe to fal generation lifecycle pushes. Each returns an unsubscribe fn. */
     onGenerationProgress(callback: (e: GenerationProgressEvent) => void): () => void
     onGenerationNodeDone(callback: (e: GenerationNodeDoneEvent) => void): () => void
