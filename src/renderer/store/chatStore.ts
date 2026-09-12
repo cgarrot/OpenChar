@@ -1,0 +1,382 @@
+/**
+ * Pi chat tabs: one live Pi session per tab, driven through Core's chat:* channels.
+ * Deltas, tool calls and state arrive on the events:chat frame and fold into a per-tab
+ * thread of entries (user bubbles, assistant text, tool cards).
+ */
+import { create } from 'zustand'
+import { studio } from '@/lib/studio'
+import { ipcErrorMessage } from '../lib/ipcError'
+import { useUiStore } from './uiStore'
+import { useMoodboardStore } from './moodboardStore'
+import type { ChatEvent, ChatModelInfo, ChatSessionStats, ChatTab } from '@shared/ipc'
+
+export interface ToolCard {
+  tool: string
+  args?: unknown
+  result?: unknown
+  running: boolean
+}
+
+export type ThreadEntry =
+  | { kind: 'user'; text: string; images: string[] }
+  | { kind: 'assistant'; text: string; streaming: boolean }
+  | { kind: 'tools'; cards: ToolCard[] }
+
+interface ChatState {
+  tabs: ChatTab[]
+  activeId: string | null
+  threads: Record<string, ThreadEntry[]>
+  loaded: Record<string, boolean>
+  draft: string
+  error: string | null
+  /** Attachments staged in the composer: object URLs for display + the pending Files. */
+  pending: Array<{ file: File; url: string }>
+  /** A folder whose tree listing will be prepended as agent context on the next send. */
+  folder: string | null
+  /** Model catalogue for the picker, per tab (loaded on demand). */
+  models: ChatModelInfo[]
+
+  subscribeToEvents: () => () => void
+  loadTabs: () => Promise<void>
+  selectTab: (id: string) => Promise<void>
+  createTab: (title?: string) => Promise<void>
+  closeTab: (id: string) => Promise<void>
+  setDraft: (text: string) => void
+  addFiles: (files: File[]) => void
+  removeFile: (url: string) => void
+  setFolder: (folder: string | null) => void
+  appendSelectionContext: () => void
+  setModel: (tabId: string, model: string) => Promise<void>
+  setThinking: (tabId: string, level: string) => Promise<void>
+  loadModels: (tabId: string) => Promise<void>
+  loadStats: (tabId: string) => Promise<void>
+  stats: ChatSessionStats | null
+  addRef: (tabId: string, path: string) => Promise<void>
+  removeRef: (tabId: string, path: string) => Promise<void>
+  send: () => Promise<void>
+  cancel: () => Promise<void>
+}
+
+/** Upload a chat attachment to Core's asset store; returns its id (chat:prompt {assetId}). */
+async function uploadAsset(file: File): Promise<string | null> {
+  try {
+    const res = await fetch('/v1/assets', { method: 'POST', body: file })
+    if (!res.ok) return null
+    const stored = (await res.json()) as { id?: string }
+    return stored.id ?? null
+  } catch {
+    return null
+  }
+}
+
+/** A Result envelope's error text — ipcErrorMessage() would String() the whole object
+ * into "[object Object]". */
+function resultError(res: { ok: boolean; error?: unknown }): string {
+  if (res.error && typeof res.error === 'string' && res.error.trim()) return res.error
+  return ipcErrorMessage(res.error ?? res)
+}
+
+/** The canvas selection as a compact context block, or null when nothing is selected. */
+function selectionContext(): string | null {
+  const ids = new Set(useUiStore.getState().canvasSelection)
+  if (!ids.size) return null
+  const board = useMoodboardStore.getState()
+  const items = board.items
+    .filter((i) => ids.has(i.id))
+    .map((i) => {
+      const data = i.data as Record<string, unknown> | undefined
+      const core = (data?.core ?? {}) as Record<string, unknown>
+      // Loaders carry the assets they expose — the #1 thing the agent otherwise digs for.
+      const loader = (data?.assetIds ?? []) as string[]
+      return {
+        id: i.id,
+        type: core.type ?? i.type,
+        params: core.params ?? (typeof data?.promptText === 'string' ? data.promptText : ''),
+        ...(loader.length ? { assets: loader } : {}),
+      }
+    })
+  if (!items.length) return null
+  const links = board.connectors
+    .filter((c) => ids.has(c.fromItemId) && ids.has(c.toItemId))
+    .map((c) => `${c.fromItemId} -> ${c.toItemId}`)
+  return `[Contexte canvas — sélection actuelle]\n${JSON.stringify({ items, links }, null, 1).slice(0, 4000)}`
+}
+
+export const useChatStore = create<ChatState>((set, get) => ({
+  tabs: [],
+  activeId: null,
+  threads: {},
+  loaded: {},
+  draft: '',
+  error: null,
+  pending: [],
+  folder: null,
+  /** Model catalogue for the picker, per tab (loaded on demand). */
+  models: [] as ChatModelInfo[],
+  stats: null as ChatSessionStats | null,
+
+  subscribeToEvents: () => {
+    const off = studio().events.onChat((event: ChatEvent) => {
+      const { tabs, threads, activeId } = get()
+      // A state frame carries nothing else; refetch the tab list for the badge.
+      if (event.kind === 'state') {
+        void studio()
+          .chat.tabs()
+          .then((res) => {
+            if (res.ok) set({ tabs: res.value })
+          })
+        // Refresh usage after each run settles (cost/context moved).
+        const current = get().activeId
+        if (current === event.tabId)
+          void studio()
+            .chat.stats(current)
+            .then((r) => {
+              if (r.ok) set({ stats: r.value })
+            })
+        return
+      }
+      const thread = threads[event.tabId] ?? []
+      const patch = (entries: ThreadEntry[]) => ({
+        threads: { ...threads, [event.tabId]: entries },
+      })
+
+      if (event.kind === 'delta') {
+        const entries = [...thread]
+        const i = [...entries].reverse().findIndex((e) => e.kind === 'assistant')
+        if (i === -1) {
+          entries.push({ kind: 'assistant', text: event.text, streaming: true })
+        } else {
+          const at = entries.length - 1 - i
+          const current = entries[at] as Extract<ThreadEntry, { kind: 'assistant' }>
+          entries[at] = { ...current, text: current.text + event.text, streaming: true }
+        }
+        set(patch(entries))
+        return
+      }
+      if (event.kind === 'message') {
+        // The final assistant message replaces the accumulated deltas.
+        const entries: ThreadEntry[] = thread.filter((e) => e.kind !== 'assistant')
+        if (event.message.role === 'assistant' && event.message.text) {
+          entries.push({ kind: 'assistant', text: event.message.text, streaming: false })
+          set(patch(entries))
+        } else if (event.message.role === 'assistant') {
+          set(patch(entries))
+        }
+        return
+      }
+      if (event.kind === 'toolCall' || event.kind === 'toolStart') {
+        const entries = [...thread]
+        const last = entries[entries.length - 1]
+        const card: ToolCard = {
+          tool: event.tool,
+          args: event.kind === 'toolCall' ? event.input : event.args,
+          running: true,
+        }
+        if (last?.kind === 'tools') {
+          entries[entries.length - 1] = { kind: 'tools', cards: [...last.cards, card] }
+        } else {
+          entries.push({ kind: 'tools', cards: [card] })
+        }
+        set(patch(entries))
+        return
+      }
+      if (event.kind === 'toolEnd') {
+        const entries = [...thread]
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const e = entries[i]
+          if (e.kind !== 'tools') continue
+          const cards = [...e.cards]
+          for (let j = cards.length - 1; j >= 0; j--) {
+            if (cards[j].tool === event.tool && cards[j].running) {
+              cards[j] = { ...cards[j], running: false, result: event.result }
+              entries[i] = { kind: 'tools', cards }
+              set(patch(entries))
+              return
+            }
+          }
+        }
+        return
+      }
+      if (event.kind === 'error') {
+        set({ error: event.error, tabs, activeId })
+      }
+    })
+    return off
+  },
+
+  loadTabs: async () => {
+    const res = await studio().chat.tabs()
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    const active = get().activeId ?? res.value[0]?.id ?? null
+    set({ tabs: res.value, activeId: active })
+    if (active) await get().selectTab(active)
+  },
+
+  selectTab: async (id) => {
+    set({ activeId: id, error: null })
+    void get().loadStats(id)
+    if (get().loaded[id]) return
+    const res = await studio().chat.history(id)
+    if (!res.ok) {
+      // History is best-effort: a fresh tab has none and a stopped one respawns on next prompt.
+      set({ loaded: { ...get().loaded, [id]: true } })
+      return
+    }
+    const entries: ThreadEntry[] = []
+    for (const m of res.value.messages) {
+      if (m.role === 'user' && m.text) {
+        entries.push({ kind: 'user', text: m.text, images: m.images ?? [] })
+      } else if (m.role === 'assistant') {
+        if (m.tools?.length)
+          entries.push({ kind: 'tools', cards: m.tools.map((t) => ({ ...t, running: false })) })
+        if (m.text) entries.push({ kind: 'assistant', text: m.text, streaming: false })
+      }
+    }
+    set({
+      threads: { ...get().threads, [id]: entries },
+      loaded: { ...get().loaded, [id]: true },
+    })
+  },
+
+  createTab: async (title) => {
+    const res = await studio().chat.createTab(title ? { title } : undefined)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    await get().loadTabs()
+    await get().selectTab(res.value.id)
+  },
+
+  closeTab: async (id) => {
+    await studio().chat.closeTab(id, true)
+    const remaining = get().tabs.filter((t) => t.id !== id)
+    set({
+      tabs: remaining,
+      activeId: get().activeId === id ? (remaining[0]?.id ?? null) : get().activeId,
+    })
+  },
+
+  setDraft: (text) => set({ draft: text }),
+
+  addFiles: (files) => {
+    const images = files.filter((f) => f.type.startsWith('image/'))
+    if (!images.length) return
+    set({
+      pending: [
+        ...get().pending,
+        ...images.map((file) => ({ file, url: URL.createObjectURL(file) })),
+      ],
+    })
+  },
+
+  removeFile: (url) => {
+    URL.revokeObjectURL(url)
+    set({ pending: get().pending.filter((p) => p.url !== url) })
+  },
+
+  setFolder: (folder) => set({ folder: folder || null }),
+
+  setModel: async (tabId, model) => {
+    const res = await studio().chat.setModel(tabId, model)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    set({ tabs: get().tabs.map((t) => (t.id === tabId ? res.value : t)) })
+  },
+
+  setThinking: async (tabId, level) => {
+    const res = await studio().chat.setThinking(tabId, level)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    set({ tabs: get().tabs.map((t) => (t.id === tabId ? res.value : t)) })
+  },
+
+  loadModels: async (tabId) => {
+    const res = await studio().chat.models(tabId)
+    if (!res.ok) {
+      set({ error: resultError(res), models: [] })
+      return
+    }
+    set({ models: res.value })
+  },
+
+  loadStats: async (tabId) => {
+    const res = await studio().chat.stats(tabId)
+    if (res.ok) set({ stats: res.value })
+  },
+
+  addRef: async (tabId, path) => {
+    const res = await studio().chat.addRef(tabId, path)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    set({ tabs: get().tabs.map((t) => (t.id === tabId ? res.value : t)) })
+  },
+
+  removeRef: async (tabId, path) => {
+    const res = await studio().chat.removeRef(tabId, path)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    set({ tabs: get().tabs.map((t) => (t.id === tabId ? res.value : t)) })
+  },
+
+  appendSelectionContext: () => {
+    const block = selectionContext()
+    if (!block) {
+      set({ error: 'Rien de sélectionné sur le canvas.' })
+      return
+    }
+    set({ draft: `${block}\n(Demande utilisateur:) ${get().draft}`, error: null })
+  },
+
+  send: async () => {
+    const { activeId, draft, pending, folder } = get()
+    if (!activeId || (!draft.trim() && !pending.length)) return
+    const text = draft.trim()
+    // Auto-contexte : la sélection du canvas accompagne chaque message (l'agent sait de
+    // quoi on parle) ; le bouton 🎯 l'insère aussi visiblement dans le draft si voulu.
+    let message = text
+    if (!text.includes('[Contexte canvas')) {
+      const sel = selectionContext()
+      if (sel) message = `${sel}\n\n(Demande utilisateur:) ${text}`
+    }
+    const images: Array<{ assetId: string }> = []
+    for (const p of pending) {
+      const assetId = await uploadAsset(p.file)
+      if (assetId) images.push({ assetId })
+      URL.revokeObjectURL(p.url)
+    }
+    const threads = get().threads
+    set({
+      draft: '',
+      pending: [],
+      folder: null,
+      error: null,
+      threads: {
+        ...threads,
+        [activeId]: [
+          ...(threads[activeId] ?? []),
+          { kind: 'user', text: text || '(images)', images: pending.map((p) => p.url) },
+        ],
+      },
+    })
+    const res = await studio().chat.prompt(activeId, message, images, folder ?? undefined)
+    if (!res.ok) set({ error: resultError(res) })
+  },
+
+  cancel: async () => {
+    const id = get().activeId
+    if (!id) return
+    await studio().chat.cancel(id)
+  },
+}))

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Project } from '@shared/types'
 import { Logo } from '../../components/Logo'
 import { SettingsIcon } from '../../components/icons'
@@ -14,11 +15,23 @@ import { ContextMenu } from '../../components/ContextMenu'
 import { MediaLightbox } from '../../components/MediaLightbox'
 import { ControlSpaceEditorMount } from '../ControlSpace/ControlSpaceEditorMount'
 import { ActivityIndicator } from '../Activity/ActivityIndicator'
+import { ChatDock } from '../Chat/ChatPanel'
 
 /** The main shell: the node canvas plus the Settings drawer. */
 export function Workspace({ project }: { project: Project }): React.JSX.Element {
   const settingsOpen = useUiStore((s) => s.settingsOpen)
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
+  const [chatOpen, setChatOpen] = useState(true)
+  const [chatCollapsed, setChatCollapsed] = useState(false)
+  const [chatWidth, setChatWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('chat-panel-width'))
+    return saved >= 280 && saved <= 760 ? saved : 384
+  })
+  const resizeChat = (width: number): void => {
+    const clamped = Math.min(760, Math.max(280, width))
+    setChatWidth(clamped)
+    localStorage.setItem('chat-panel-width', String(clamped))
+  }
   const closeProject = useProjectStore((s) => s.closeProject)
   const resetAssets = useAssetStore((s) => s.reset)
   const resetBoard = useMoodboardStore((s) => s.reset)
@@ -53,6 +66,17 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
         <div className="flex items-center gap-1">
           <ActivityIndicator />
           <button
+            onClick={() => setChatOpen(!chatOpen)}
+            title="Pi chat"
+            aria-label="Pi chat"
+            aria-pressed={chatOpen}
+            className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+              chatOpen ? 'bg-panel text-white' : 'text-zinc-400 hover:bg-panel hover:text-zinc-200'
+            }`}
+          >
+            <span className="text-sm font-semibold">⌘</span>
+          </button>
+          <button
             onClick={() => setSettingsOpen(!settingsOpen)}
             title="Settings"
             aria-label="Settings"
@@ -75,6 +99,19 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
         {settingsOpen && (
           <div className="min-h-0 w-80 shrink-0">
             <SettingsPanel onClose={() => setSettingsOpen(false)} />
+          </div>
+        )}
+        {chatOpen && (
+          <div
+            className="min-h-0 shrink-0"
+            style={{ width: chatCollapsed ? undefined : chatWidth }}
+          >
+            <ChatDock
+              onClose={() => setChatOpen(false)}
+              collapsed={chatCollapsed}
+              onToggleCollapse={() => setChatCollapsed(!chatCollapsed)}
+              onResize={resizeChat}
+            />
           </div>
         )}
       </main>

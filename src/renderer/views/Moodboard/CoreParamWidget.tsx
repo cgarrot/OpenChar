@@ -3,6 +3,7 @@ import type { CoreParamField } from '@shared/coreNodes'
 import { useModelsTreeStore } from '../../store/modelsTreeStore'
 import { RefreshIcon } from '../../components/icons'
 import { basename, optionsWithPick } from './missingInputs'
+import { SearchSelect } from './SearchSelect'
 import { useAutoCommit } from '../../lib/useAutoCommit'
 import type { WiredParam } from './wiredParams'
 
@@ -105,6 +106,26 @@ export function CoreParamWidget({
     // A pick the catalog lacks stays listed, or the select renders blank and the name the graph
     // arrived with is lost - which is the one thing needed to go and fetch the right file.
     const shown = optionsWithPick(options, String(selected ?? ''))
+    // Long catalogs (the NanoGPT model dropdowns carry 200-600 ids) get a searchable picker;
+    // short lists keep the native select.
+    if (shown.length >= 20) {
+      const friendly = (label: string): string =>
+        field.optionsFrom === 'characters' ? label.replace(/\.char$/i, '') : label
+      return (
+        <label className="flex flex-col gap-1">
+          <span className={labelCls}>{field.label}</span>
+          <div className="flex items-center gap-1">
+            <SearchSelect
+              value={String(selected ?? '')}
+              options={shown.map((o) => ({ value: o.value, label: friendly(o.label) }))}
+              onPick={(v) => onCommit(v)}
+              emptyLabel={needsEmpty ? emptyLabel : undefined}
+            />
+            {field.optionsFrom && <ModelRefreshButton />}
+          </div>
+        </label>
+      )
+    }
     return (
       <label className="flex flex-col gap-1">
         <span className={labelCls}>{field.label}</span>

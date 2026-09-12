@@ -540,6 +540,11 @@ def create_app(
         activity.set_canceller("core", manager.cancel)
         core_generation = CoreGeneration(studio_store, manager, events, registry, activity)
         fal_generation = FalGeneration(studio_store, events, activity)
+        # Pi chat tabs: one `pi --mode rpc` process per tab, events streamed on events:chat.
+        from ..studio.chat import ChatBridge, register_chat_handlers
+
+        chat_bridge = ChatBridge(studio_store, events, assets)
+        register_chat_handlers(rpc, chat_bridge)
         training_service = Training(
             studio_store, events, on_output=catalog.rescan, activity=activity
         )

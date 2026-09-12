@@ -50,7 +50,9 @@
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
     "@xyflow/react": "^12.11.0",
+    "react-markdown": "^10.1.0",
     "react-resizable-panels": "^2.1.9",
+    "remark-gfm": "^4.0.1",
     "three": "^0.171.0"
   },
   "devDependencies": {

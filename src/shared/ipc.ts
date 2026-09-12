@@ -324,9 +324,31 @@ export const IpcChannels = {
     /** The running app version (from package.json). */
     version: 'app:version',
   },
+  chat: {
+    /** Every chat tab (one Pi session each). */
+    tabs: 'chat:tabs',
+    /** Spawn a tab (a `pi --mode rpc` process). */
+    createTab: 'chat:createTab',
+    closeTab: 'chat:closeTab',
+    renameTab: 'chat:renameTab',
+    /** Send a message (with optional images) to a tab's Pi session. */
+    prompt: 'chat:prompt',
+    /** Abort the tab's current agent run. */
+    cancel: 'chat:cancel',
+    /** The tab's message history (from the Pi session file). */
+    history: 'chat:history',
+    setModel: 'chat:setModel',
+    setThinking: 'chat:setThinking',
+    models: 'chat:models',
+    stats: 'chat:stats',
+    addRef: 'chat:addRef',
+    removeRef: 'chat:removeRef',
+  },
   events: {
     /** Main → renderer: the asset library changed (e.g. a video poster/transcode is ready). */
     libraryChanged: 'events:libraryChanged',
+    /** Main → renderer: Pi chat lifecycle (deltas, tool calls, state) per tab. */
+    chat: 'events:chat',
     /** Main → renderer: director timeline render progress. */
     timelineProgress: 'events:timelineProgress',
     /** Main → renderer: fal generation lifecycle (per-node progress, node done, done, error). */
@@ -452,6 +474,57 @@ export interface CreateProjectInput {
   name: string
   /** Absolute parent directory the `.inlinestudio` folder is created in. */
   parentDir: string
+}
+
+/** One chat tab = one live Pi session. */
+export interface ChatTab {
+  id: string
+  title: string
+  model: string
+  cwd: string
+  /** stopped | starting | idle | streaming | error */
+  state: string
+  lastError: string
+  lastActivity: number
+  /** Persistent references (dirs/files) prepended as context to every prompt. */
+  refs: string[]
+  /** Current thinking level ('' = model default). */
+  thinking: string
+  /** The Pi session file (.jsonl) — copyable for review/debugging. */
+  sessionFile: string
+}
+
+/** One model available to a tab's pi session. */
+export interface ChatModelInfo {
+  id: string
+  name: string
+  thinking: boolean
+}
+
+/** Session usage of a chat tab (pi get_session_stats). */
+export interface ChatSessionStats {
+  available: boolean
+  cost?: number
+  tokens?: { total?: number }
+  contextUsage?: { percent?: number | null }
+}
+
+/** A `events:chat` frame: what changed on a tab. */
+export type ChatEvent =
+  | { tabId: string; kind: 'delta'; text: string }
+  | { tabId: string; kind: 'message'; message: ChatHistoryMessage }
+  | { tabId: string; kind: 'toolCall'; tool: string; input: unknown }
+  | { tabId: string; kind: 'toolStart'; tool: string; args: unknown }
+  | { tabId: string; kind: 'toolEnd'; tool: string; result: unknown }
+  | { tabId: string; kind: 'state' }
+  | { tabId: string; kind: 'error'; error: string }
+
+/** One normalized Pi message, for first render after a reload. */
+export interface ChatHistoryMessage {
+  role: string
+  text: string
+  tools: Array<{ tool: string; input: unknown }>
+  images: string[]
 }
 
 /** The backend API surface - implemented by the web client (createWebClient) against Inline Core. */
@@ -899,11 +972,45 @@ export interface InlineStudioApi {
     /** The running app version (from package.json). */
     version(): Promise<Result<string>>
   }
+  chat: {
+    /** Every tab: id, title, model, cwd, state, lastError. */
+    tabs(): Promise<Result<ChatTab[]>>
+    /** Spawn a tab (a `pi --mode rpc` process); optional title / model pattern / cwd. */
+    createTab(input?: { title?: string; model?: string; cwd?: string }): Promise<Result<ChatTab>>
+    /** Stop a tab's process; with kill=false the entry stays and a prompt respawns it. */
+    closeTab(tabId: string, kill?: boolean): Promise<Result<{ id: string; closed: boolean }>>
+    renameTab(tabId: string, title: string): Promise<Result<ChatTab>>
+    /** Send a message; images are {assetId} (from /v1/assets) or {data, mimeType} base64;
+     * folder prepends a bounded tree listing of that directory as agent context. */
+    prompt(
+      tabId: string,
+      message: string,
+      images?: Array<{ assetId?: string; data?: string; mimeType?: string }>,
+      folder?: string,
+    ): Promise<Result<{ id: string; accepted: boolean }>>
+    /** Abort the tab's current run. */
+    cancel(tabId: string): Promise<Result<{ id: string; cancelled: boolean }>>
+    /** The tab's message history, normalized. */
+    history(tabId: string): Promise<Result<{ id: string; messages: ChatHistoryMessage[] }>>
+    /** Switch the tab's Pi model ('provider/id'). */
+    setModel(tabId: string, model: string): Promise<Result<ChatTab>>
+    /** Set the tab's thinking level (off|minimal|low|medium|high|xhigh|max). */
+    setThinking(tabId: string, level: string): Promise<Result<ChatTab>>
+    /** The models available to this tab's pi (machine-configured providers). */
+    models(tabId: string): Promise<Result<ChatModelInfo[]>>
+    /** Token/cost/context usage of the tab's session. */
+    stats(tabId: string): Promise<Result<ChatSessionStats>>
+    /** Add a persistent reference (dir or file) prepended as context to every prompt. */
+    addRef(tabId: string, path: string): Promise<Result<ChatTab>>
+    removeRef(tabId: string, path: string): Promise<Result<ChatTab>>
+  }
   /** Resolve the absolute path of a File dropped from the OS (Electron webUtils). Sync. */
   getPathForFile(file: File): string
   events: {
     /** Subscribe to "asset library changed" pushes from main. Returns an unsubscribe fn. */
     onLibraryChanged(callback: () => void): () => void
+    /** Subscribe to Pi chat pushes (deltas, tool calls, state, errors). Unsubscribe fn. */
+    onChat(callback: (e: ChatEvent) => void): () => void
     /** Subscribe to fal generation lifecycle pushes. Each returns an unsubscribe fn. */
     onGenerationProgress(callback: (e: GenerationProgressEvent) => void): () => void
     onGenerationNodeDone(callback: (e: GenerationNodeDoneEvent) => void): () => void
