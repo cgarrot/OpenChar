@@ -47,9 +47,10 @@ You are the assistant embedded in OpenChar Studio's chat panel. The user is a cr
 on a node canvas (image/video/audio generation); you can act on it through the graph_* tools.
 
 Ground rules:
-- Every message already carries a "[Contexte canvas]" block: the user's current selection
-  (item types, key params, links) plus any persistent references. USE IT. Do not re-fetch what
-  is already in context; call graph_list_nodes only when you truly need the WHOLE board.
+- Every message carries a "[Contexte canvas]" block when something is selected (item types,
+  key params, links); persistent folder references are injected ONCE per session and remain
+  valid for the whole conversation. USE the provided context; call graph_list_nodes only when
+  you truly need the WHOLE board.
 - Answer questions from the provided context FIRST. "What is this node?"-style questions need
   ZERO tool calls.
 - Prefer the FEWEST actions that satisfy the request. Never add unrequested nodes, never
@@ -94,6 +95,9 @@ class _Tab:
         self.session_file = session_file
         #: Persistent references (dirs/files) whose context is prepended to every prompt.
         self.refs: list[str] = list(refs or [])
+        #: Signature of the refs context already delivered this session — refs are injected
+        #: ONCE (re-injected only when the list changes or after a fork rewinds the branch).
+        self.refs_sent: str = ""
         #: Last applied thinking level (off/minimal/low/medium/high/...), "" = model default.
         self.thinking = thinking
         self.process: asyncio.subprocess.Process | None = None
@@ -110,7 +114,7 @@ class _Tab:
             "state": self.state, "lastError": self.last_error,
             "lastActivity": int(self.last_activity * 1000),
             "refs": self.refs, "thinking": self.thinking,
-            "sessionFile": self.session_file,
+            "sessionFile": self.session_file, "refsSent": self.refs_sent,
         }
 
 
@@ -152,6 +156,7 @@ class ChatBridge:
                            str(entry.get("sessionFile", "")),
                            [str(r) for r in entry.get("refs", []) if r],
                            str(entry.get("thinking", "")))
+                tab.refs_sent = str(entry.get("refsSent", ""))
                 self._tabs[tab.id] = tab
         except (OSError, ValueError, KeyError):
             pass
@@ -159,7 +164,8 @@ class ChatBridge:
     def _save_tabs(self) -> None:
         payload = {"tabs": [
             {"id": t.id, "title": t.title, "model": t.model, "cwd": t.cwd,
-             "sessionFile": t.session_file, "refs": t.refs, "thinking": t.thinking}
+             "sessionFile": t.session_file, "refs": t.refs, "thinking": t.thinking,
+             "refsSent": t.refs_sent}
             for t in self._tabs.values()
         ]}
         self._tabs_file().write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -217,7 +223,21 @@ class ChatBridge:
             if resolved is not None:
                 payload_images.append(resolved)
         text = str(message)
-        contexts = [self._ref_context(ref) for ref in tab.refs]
+        contexts: list[str] = []
+        # Persistent refs ride ONCE per session: re-sending a folder tree with every message
+        # burns tokens for no gain. Re-injected when the list changes (new signature) — and
+        # cleared after a fork, since the branch rewind may drop the earlier injection.
+        signature = "\n".join(tab.refs)
+        if signature != tab.refs_sent:
+            if tab.refs:
+                contexts.append(
+                    "[Contexte persistant — injecté une fois par session, il reste valable pour "
+                    "toute la conversation]\n" + "\n\n".join(
+                        self._ref_context(ref) for ref in tab.refs
+                    )
+                )
+            tab.refs_sent = signature
+            self._save_tabs()
         if folder:
             contexts.append(self._folder_context(str(folder)))
         if contexts:
@@ -423,6 +443,8 @@ class ChatBridge:
         tab = self._tab(tab_id)
         await self._ensure_process(tab)
         await self._command(tab, {"type": "fork", "entryId": str(entry_id)})
+        tab.refs_sent = ""  # the branch rewind may have dropped the refs injection
+        self._save_tabs()
         await self.prompt(tab_id, str(message))
         return {"id": tab_id, "forked": True}
 
