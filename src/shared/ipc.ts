@@ -980,8 +980,15 @@ export interface InlineStudioApi {
   chat: {
     /** Every tab: id, title, model, cwd, state, lastError. */
     tabs(): Promise<Result<ChatTab[]>>
-    /** Spawn a tab (a `pi --mode rpc` process); optional title / model pattern / cwd. */
-    createTab(input?: { title?: string; model?: string; cwd?: string }): Promise<Result<ChatTab>>
+    /** Spawn a tab (a `pi --mode rpc` process); optional title / model pattern / cwd / refs /
+     * thinking — refs+model+thinking make a "same context" sibling tab. */
+    createTab(input?: {
+      title?: string
+      model?: string
+      cwd?: string
+      refs?: string[]
+      thinking?: string
+    }): Promise<Result<ChatTab>>
     /** Stop a tab's process; with kill=false the entry stays and a prompt respawns it. */
     closeTab(tabId: string, kill?: boolean): Promise<Result<{ id: string; closed: boolean }>>
     renameTab(tabId: string, title: string): Promise<Result<ChatTab>>

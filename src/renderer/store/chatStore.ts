@@ -44,6 +44,7 @@ interface ChatState {
   loadTabs: () => Promise<void>
   selectTab: (id: string) => Promise<void>
   createTab: (title?: string) => Promise<void>
+  newTabFromContext: () => Promise<void>
   closeTab: (id: string) => Promise<void>
   setDraft: (text: string) => void
   addFiles: (files: File[]) => void
@@ -284,6 +285,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   createTab: async (title) => {
     const res = await studio().chat.createTab(title ? { title } : undefined)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    await get().loadTabs()
+    await get().selectTab(res.value.id)
+  },
+
+  /** Clone the current tab's context (refs + model + thinking) into a fresh Pi session. */
+  newTabFromContext: async () => {
+    const current = get().tabs.find((t) => t.id === get().activeId)
+    if (!current) return
+    const res = await studio().chat.createTab({
+      title: `${current.title} ⟶`,
+      model: current.model || undefined,
+      thinking: current.thinking || undefined,
+      refs: current.refs,
+    })
     if (!res.ok) {
       set({ error: resultError(res) })
       return

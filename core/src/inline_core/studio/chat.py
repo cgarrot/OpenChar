@@ -184,7 +184,9 @@ class ChatBridge:
         title = str(inp.get("title") or f"Chat {len(self._tabs) + 1}")
         model = str(inp.get("model") or "")
         cwd = str(inp.get("cwd") or self._default_cwd())
-        tab = _Tab(uuid.uuid4().hex[:12], title, model, cwd)
+        tab = _Tab(uuid.uuid4().hex[:12], title, model, cwd,
+                   refs=[str(r) for r in inp.get("refs", []) if r],
+                   thinking=str(inp.get("thinking") or ""))
         self._tabs[tab.id] = tab
         self._save_tabs()
         await self._ensure_process(tab)

@@ -183,6 +183,8 @@ function RefsBar(): React.JSX.Element {
   const tab = useChatStore((s) => s.tabs.find((t) => t.id === s.activeId))
   const addRef = useChatStore((s) => s.addRef)
   const removeRef = useChatStore((s) => s.removeRef)
+  const newTabFromContext = useChatStore((s) => s.newTabFromContext)
+  const [menuOpen, setMenuOpen] = useState(false)
   if (!activeId) return <></>
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-panel/50 px-2 py-1.5">
@@ -214,12 +216,40 @@ function RefsBar(): React.JSX.Element {
       >
         + référence
       </button>
-      <span
-        className="ml-auto text-[10px] text-zinc-600"
-        title="Les éléments sélectionnés sur le canvas partent avec le prochain message"
-      >
-        sélection → contexte auto
-      </span>
+      <div className="relative ml-auto">
+        <button
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="rounded px-1.5 py-0.5 text-[11px] text-zinc-500 hover:bg-panel hover:text-white"
+          title="Menu du contexte"
+        >
+          ☰
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 top-full z-20 mt-1 w-64 rounded border border-border bg-surface p-1 shadow-xl">
+            <button
+              onClick={() => {
+                setMenuOpen(false)
+                void newTabFromContext()
+              }}
+              className="block w-full rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+              title="Nouvelle session Pi avec les mêmes références, modèle et thinking"
+            >
+              ✚ Nouveau chat avec ce contexte
+              <span className="block text-[10px] text-zinc-600">
+                Mêmes dossiers/références, modèle et thinking — session vierge
+              </span>
+            </button>
+          </div>
+        )}
+      </div>
+      {!menuOpen && (
+        <span
+          className="text-[10px] text-zinc-600"
+          title="Les éléments sélectionnés sur le canvas partent avec le prochain message"
+        >
+          sélection → contexte auto
+        </span>
+      )}
     </div>
   )
 }
