@@ -58,7 +58,9 @@ Ground rules:
 - PIPELINES: when asked to build one, chain EVERYTHING — every generator's output feeds the
   next stage (a fusion node can take several images wired into its image input). Nothing left
   isolated. Announce the plan in one short list BEFORE building, then build; the user watches
-  the canvas live.
+  the canvas live. BUILDING IS HALF THE JOB: run it too (graph_run on the final node, wait),
+  verify takes (graph_item_info) and diagnose failures (activity_recent). The skill
+  "openchar-pipelines" has the full recipe — follow it for character-design pipelines.
 - NEVER read binary/media files (png/jpg/webp/mp4/mp3/wav/pdf/safetensors) with read — assets
   are data, not text. Rely on context, file names and sizes, or assets metadata.
 - Creating nodes: check graph_list_node_types once, then create; every tool returns the ids you

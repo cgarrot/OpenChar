@@ -37,6 +37,8 @@ interface ChatState {
   editing: { entryId: string; original: string } | null
   startEditing: (entryId: string, original: string) => void
   cancelEditing: () => void
+  /** Fork from a past user message and replay it verbatim on the fresh branch. */
+  replayFrom: (entryId: string, text: string) => Promise<void>
   /** Model catalogue for the picker, per tab (loaded on demand). */
   models: ChatModelInfo[]
 
@@ -344,6 +346,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ editing: { entryId, original }, draft: original, error: null }),
 
   cancelEditing: () => set({ editing: null, draft: '' }),
+
+  replayFrom: async (entryId, text) => {
+    const activeId = get().activeId
+    if (!activeId) return
+    const res = await studio().chat.forkResend(activeId, entryId, text)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    set({
+      threads: { ...get().threads, [activeId]: [] },
+      loaded: { ...get().loaded, [activeId]: false },
+    })
+    await get().selectTab(activeId)
+  },
 
   setModel: async (tabId, model) => {
     const res = await studio().chat.setModel(tabId, model)

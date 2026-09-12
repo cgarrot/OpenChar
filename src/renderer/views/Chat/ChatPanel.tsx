@@ -84,6 +84,76 @@ function ToolCardView({ tool, args, result, running }: ToolCard): React.JSX.Elem
   )
 }
 
+/** Discreet per-message actions (hover): copy, edit & resend, replay-from-here. */
+function UserBubbleMenu({
+  text,
+  entryId,
+  onEdit,
+}: {
+  text: string
+  entryId?: string
+  onEdit?: () => void
+}): React.JSX.Element | null {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  if (!entryId) return null
+  const item = (label: string, icon: string, title: string, action: () => void) => (
+    <button
+      key={label}
+      onClick={() => {
+        setOpen(false)
+        action()
+      }}
+      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+      title={title}
+    >
+      <span className="w-4 text-center">{icon}</span>
+      {label}
+    </button>
+  )
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`rounded px-1 text-xs text-zinc-600 transition-opacity hover:text-zinc-300 ${
+          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        }`}
+        title="Actions du message"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded border border-border bg-surface p-1 shadow-xl">
+          {item(
+            copied ? 'Copié ✓' : 'Copier le message',
+            '⧉',
+            'Copier le texte dans le presse-papier',
+            () => {
+              void navigator.clipboard.writeText(text).then(() => {
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              })
+            },
+          )}
+          {onEdit &&
+            item(
+              'Modifier & renvoyer',
+              '✎',
+              'Éditer ce message — la conversation repart de ici',
+              onEdit,
+            )}
+          {item(
+            'Rejouer depuis ici',
+            '↻',
+            'Fourche une nouvelle branche à ce message et le renvoie tel quel',
+            () => void useChatStore.getState().replayFrom(entryId, text),
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function EntryView({
   entry,
   onEdit,
@@ -101,8 +171,15 @@ function EntryView({
             ))}
           </div>
         )}
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-zinc-700/60 px-3 py-2 text-sm text-zinc-100">
-          {entry.text}
+        <div className="flex items-center gap-1">
+          <UserBubbleMenu
+            text={entry.text}
+            entryId={entry.entryId}
+            onEdit={onEdit ? () => onEdit(entry.text) : undefined}
+          />
+          <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-zinc-700/60 px-3 py-2 text-sm text-zinc-100">
+            {entry.text}
+          </div>
         </div>
         {entry.contextNote && (
           <span
@@ -111,15 +188,6 @@ function EntryView({
           >
             ⟡ contexte : {entry.contextNote}
           </span>
-        )}
-        {onEdit && entry.entryId && (
-          <button
-            onClick={() => onEdit(entry.text)}
-            className="hidden text-[10px] text-zinc-600 hover:text-zinc-300 group-hover:block"
-            title="Modifier et renvoyer (la conversation repart de ce message)"
-          >
-            ✎ modifier &amp; renvoyer
-          </button>
         )}
       </div>
     )
@@ -489,7 +557,6 @@ export function ChatDock({
   const draft = useChatStore((s) => s.draft)
   const error = useChatStore((s) => s.error)
   const pending = useChatStore((s) => s.pending)
-  const streaming = tabs.find((t) => t.id === activeId)?.state === 'streaming'
   const activeState = tabs.find((t) => t.id === activeId)?.state
 
   const loadTabs = useChatStore((s) => s.loadTabs)
@@ -634,10 +701,15 @@ export function ChatDock({
             {copied ? '✓' : '⧉'}
           </button>
         </div>
-        {streaming && (
+        {activeState && activeState !== 'idle' && activeState !== 'stopped' && (
           <button
             onClick={() => void cancel()}
             className="rounded bg-red-500/20 px-2 py-1 text-[11px] text-red-300 hover:bg-red-500/30"
+            title={
+              activeState === 'streaming'
+                ? 'Arrêter la génération en cours'
+                : 'Annuler le démarrage'
+            }
           >
             Stop
           </button>
