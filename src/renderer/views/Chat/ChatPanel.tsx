@@ -269,6 +269,8 @@ function EntryView({
 
 /** Stable empty thread: a fresh [] from the selector would re-render forever (zustand v5). */
 const NO_THREAD: ThreadEntry[] = []
+/** Per-tab scroll positions, surviving dock close (module scope): where you were reading. */
+const scrollMemory = new Map<string, number>()
 const THINKING_LEVELS = ['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 /** Live chips of what is selected on the canvas — the context that rides along with the
@@ -686,6 +688,7 @@ export function ChatDock({
   const cancelEditing = useChatStore((s) => s.cancelEditing)
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const atBottomRef = useRef(true)
   const fileRef = useRef<HTMLInputElement>(null)
   const [copied, setCopied] = useState(false)
 
@@ -694,8 +697,21 @@ export function ChatDock({
     return subscribe()
   }, [loadTabs, subscribe])
 
+  // Scroll memory per tab: coming back to a conversation restores where you were reading,
+  // instead of always jumping to the bottom. New content follows the bottom ONLY if you
+  // were already there (scroll up mid-stream and it stops chasing you).
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+    const el = scrollRef.current
+    if (!el || !activeId) return
+    const saved = scrollMemory.get(activeId)
+    requestAnimationFrame(() => {
+      el.scrollTop = saved ?? el.scrollHeight
+    })
+  }, [activeId])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
   }, [thread])
 
   const onDrop = (e: React.DragEvent) => {
@@ -842,7 +858,15 @@ export function ChatDock({
       <TabSettingsBar />
 
       {/* Thread */}
-      <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
+      <div
+        ref={scrollRef}
+        onScroll={(e) => {
+          const el = e.currentTarget
+          if (activeId) scrollMemory.set(activeId, el.scrollTop)
+          atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+        }}
+        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3"
+      >
         {!tabs.length && (
           <div className="mt-8 px-4 text-center text-xs text-zinc-500">
             Aucune session. « + » démarre une session Pi connectée à ce canvas — elle peut créer des
