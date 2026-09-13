@@ -229,7 +229,13 @@ def create_app(
     # a custom --models-dir does not hide ./models.
     catalog = ModelCatalog([Path(models_root)] if models_root else models_dirs())
     takes_root = Path(takes_dir or "./.inline-takes")
-    manager = RunManager(registry, cache, policy, store=run_store, takes=FileTakeStore(takes_root))
+    manager = RunManager(
+        registry, cache, policy, store=run_store, takes=FileTakeStore(takes_root),
+        # Hosted (network-bound) nodes render in parallel; local GPU models still queue behind
+        # each other through the device policy. Opt-in because two local model loads at once
+        # would double VRAM.
+        workers=int(os.environ.get("INLINE_RUN_WORKERS", "1")),
+    )
     rpc = rpc or RpcRouter()
     events = events or EventBroadcaster()
     # Host/GPU telemetry for the Trainer tab; only meaningful with the SPA (studio) backend wired.

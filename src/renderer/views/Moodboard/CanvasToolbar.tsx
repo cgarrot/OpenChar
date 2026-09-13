@@ -12,6 +12,7 @@ export function CanvasToolbar({
   onPanTool,
   onAddText,
   onOpenAdd,
+  onTidy,
 }: {
   /** The active interaction tool. */
   tool: 'select' | 'pan'
@@ -21,6 +22,8 @@ export function CanvasToolbar({
   onAddText?: () => void
   /** Open the "Add node" list, anchored to the + button. */
   onOpenAdd: (buttonRect: DOMRect) => void
+  /** Auto-layout the whole board (layered by graph depth). */
+  onTidy: () => void
 }): React.JSX.Element {
   return (
     <div className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 flex-row items-center gap-1 rounded-lg border border-border bg-panel/95 p-1 shadow-lg backdrop-blur">
@@ -41,6 +44,10 @@ export function CanvasToolbar({
         onClick={(e) => onOpenAdd(e.currentTarget.getBoundingClientRect())}
       >
         <PlusIcon />
+      </ToolButton>
+      <div className="mx-0.5 h-6 w-px self-center bg-border" />
+      <ToolButton label="Ranger le graphe (layout en colonnes)" onClick={() => void onTidy()}>
+        <span className="text-sm">✨</span>
       </ToolButton>
     </div>
   )

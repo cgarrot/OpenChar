@@ -12,6 +12,8 @@ interface Props {
   /** Audio is absent on purpose: there is nothing to zoom into, so it never expands. */
   onExpand?: (kind: 'image' | 'video') => void
   className?: string
+  /** Natural dimensions of the loaded image — lets the node resize to the take's ratio. */
+  onNatural?: (width: number, height: number) => void
 }
 
 /**
@@ -27,9 +29,12 @@ export function CoreOutputPreview({
   name,
   onExpand,
   className,
+  onNatural,
 }: Props): React.JSX.Element {
   const src = resolveMedia(filePath)
-  const shared = className ?? 'h-full w-full object-cover'
+  // object-contain: a 16:9 take must letterbox inside the node, never be cropped to the
+  // node's current box — the node then resizes to the take's ratio (see onNatural).
+  const shared = className ?? 'h-full w-full object-contain'
 
   if (kind === 'video') {
     return (
@@ -55,8 +60,12 @@ export function CoreOutputPreview({
     <img
       src={src}
       alt={name}
-      title="Double-click to expand"
+      title="Double-click pour agrandir"
       onDoubleClick={() => onExpand?.('image')}
+      onLoad={(e) => {
+        const img = e.target as HTMLImageElement
+        if (img.naturalWidth && img.naturalHeight) onNatural?.(img.naturalWidth, img.naturalHeight)
+      }}
       className={`${shared} cursor-zoom-in`}
     />
   )

@@ -335,6 +335,7 @@ export const IpcChannels = {
     prompt: 'chat:prompt',
     /** Abort the tab's current agent run. */
     cancel: 'chat:cancel',
+    steer: 'chat:steer',
     /** The tab's message history (from the Pi session file). */
     history: 'chat:history',
     setModel: 'chat:setModel',
@@ -1015,6 +1016,8 @@ export interface InlineStudioApi {
     ): Promise<Result<{ id: string; accepted: boolean }>>
     /** Abort the tab's current run. */
     cancel(tabId: string): Promise<Result<{ id: string; cancelled: boolean }>>
+    /** Inject mid-run: delivered after the current tool calls, before the next LLM turn. */
+    steer(tabId: string, message: string): Promise<Result<{ id: string; steered: boolean }>>
     /** The tab's message history, normalized. */
     history(tabId: string): Promise<Result<{ id: string; messages: ChatHistoryMessage[] }>>
     /** Switch the tab's Pi model ('provider/id'). */

@@ -113,6 +113,8 @@ interface MoodboardState {
   lastDuplicateIdMap: Map<string, string>
   /** `recordHistory: false` skips the undo snapshot - used by programmatic layout fits. */
   updateItem: (id: string, patch: MoodboardItemPatch, recordHistory?: boolean) => Promise<void>
+  /** Auto-layout: layered by graph depth, stacked per layer — one history entry. */
+  tidyBoard: () => Promise<void>
   /** Merge into an item's `data`. Node selections (dataset, run, hyperparams) live there. */
   patchItemData: (id: string, data: Record<string, unknown>) => Promise<void>
   /** Restore the text of the prompt node wired into `nodeId`'s `prompt` input (no-op if none).
@@ -873,6 +875,48 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
     }
+  },
+
+  tidyBoard: async () => {
+    const { items, connectors, updateItem } = get()
+    if (!items.length) return
+    // Profondeur topologique : sources en colonne 0, chaque node a droite de ses upstreams.
+    const incoming = new Map<string, string[]>()
+    for (const c of connectors) {
+      incoming.set(c.toItemId, [...(incoming.get(c.toItemId) ?? []), c.fromItemId])
+    }
+    const depth = new Map<string, number>()
+    const depthOf = (id: string, seen = new Set<string>()): number => {
+      if (depth.has(id)) return depth.get(id) as number
+      if (seen.has(id)) return 0
+      seen.add(id)
+      const up = incoming.get(id) ?? []
+      const d = up.length ? 1 + Math.max(...up.map((u) => depthOf(u, seen))) : 0
+      depth.set(id, d)
+      return d
+    }
+    for (const i of items) depthOf(i.id)
+    const layers = new Map<number, typeof items>()
+    for (const i of items) {
+      const d = depth.get(i.id) ?? 0
+      layers.set(d, [...(layers.get(d) ?? []), i])
+    }
+    const columnGap = 420
+    const rowGap = 90
+    const jobs: Array<Promise<void>> = []
+    for (const [d, layerItems] of [...layers.entries()].sort((a, b) => a[0] - b[0])) {
+      const sorted = [...layerItems].sort((a, b) => a.y - b.y)
+      let y = 60
+      for (const i of sorted) {
+        const x = 60 + d * columnGap
+        const nextY = y + (i.height ?? 160) + rowGap
+        if (Math.abs(i.x - x) > 1 || Math.abs(i.y - y) > 1) {
+          jobs.push(updateItem(i.id, { x, y }, false))
+        }
+        y = nextY
+      }
+    }
+    await Promise.all(jobs)
   },
 
   reset: () => set({ items: [], connectors: [], error: null, past: [], future: [] }),

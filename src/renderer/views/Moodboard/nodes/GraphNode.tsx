@@ -620,7 +620,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         running={busy || executing}
         invalid={missing.length > 0 || failed}
       >
-        <div className="relative flex h-full w-full flex-col">
+        <div className="group relative flex h-full w-full flex-col">
           {/* Edge-to-edge output preview. */}
           <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
             {references.length > 0 && <ReferenceStrip references={references} />}
@@ -643,7 +643,37 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       name: shownMedia.prompt || descriptor.title,
                     })
                   }
+                  onNatural={(w, h) => {
+                    // Resize the node to the take's aspect ratio (width stays, height follows),
+                    // so a 16:9 render is not letterboxed forever in a squarish card.
+                    if (rendering || !w || !h) return
+                    const natural = w / h
+                    const box = item.width / item.height
+                    if (Math.abs(box - natural) / natural < 0.08) return
+                    const chrome = 110
+                    const target = Math.min(
+                      1600,
+                      Math.max(180, Math.round(item.width / natural) + chrome),
+                    )
+                    if (Math.abs(target - item.height) < 12) return
+                    void updateItem(itemId, { height: target })
+                  }}
                 />
+                {shownMedia.kind !== 'audio' && (
+                  <button
+                    onClick={() =>
+                      openLightbox({
+                        src: resolveMedia(shownMedia.filePath),
+                        kind: shownMedia.kind === 'video' ? 'video' : 'image',
+                        name: shownMedia.prompt || descriptor.title,
+                      })
+                    }
+                    className="nodrag absolute bottom-2 right-2 rounded bg-black/60 px-1.5 py-0.5 text-[11px] text-zinc-300 opacity-0 transition-opacity hover:bg-black/80 hover:text-white group-hover:opacity-100"
+                    title="Agrandir (ou double-clic)"
+                  >
+                    ⤢
+                  </button>
+                )}
               </div>
             ) : (
               <div className="flex h-full w-full items-center justify-center px-4">

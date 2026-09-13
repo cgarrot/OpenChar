@@ -1197,6 +1197,7 @@ function Board(): React.JSX.Element {
             void addTextAt(x, y)
           }}
           onOpenAdd={openAddFromButton}
+          onTidy={() => void useMoodboardStore.getState().tidyBoard()}
         />
 
         <GenerateSettingsPanel />

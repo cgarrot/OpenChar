@@ -501,6 +501,52 @@ function TabSettingsBar(): React.JSX.Element {
   )
 }
 
+/** A message queued while the agent runs: auto-sent at the end, steerable early. */
+function QueuedCard(): React.JSX.Element | null {
+  const activeId = useChatStore((s) => s.activeId)
+  const queued = useChatStore((s) => (s.activeId ? s.queued[s.activeId] : undefined))
+  const unqueue = useChatStore((s) => s.unqueue)
+  const editQueued = useChatStore((s) => s.editQueued)
+  const steerQueued = useChatStore((s) => s.steerQueued)
+  if (!activeId || queued === undefined) return null
+  return (
+    <div className="mx-2 mb-1 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2">
+      <span className="mt-0.5 text-[11px] text-amber-300" title="En attente de la fin du run">
+        ⏳
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[11px] text-zinc-200" title={queued}>
+          {queued}
+        </div>
+        <div className="mt-1 flex items-center gap-2 text-[10px]">
+          <button
+            onClick={() => activeId && void steerQueued(activeId)}
+            className="rounded bg-amber-400/20 px-2 py-0.5 text-amber-200 hover:bg-amber-400/30"
+            title="Injecter maintenant : livré après les tool calls en cours, avant le prochain tour"
+          >
+            ↯ steering
+          </button>
+          <button
+            onClick={() => activeId && editQueued(activeId)}
+            className="text-zinc-400 hover:text-white"
+            title="Remettre dans le composer pour l'éditer"
+          >
+            ✎ éditer
+          </button>
+          <button
+            onClick={() => unqueue(activeId)}
+            className="text-zinc-500 hover:text-red-400"
+            title="Annuler ce message en attente"
+          >
+            ✕ annuler
+          </button>
+          <span className="ml-auto text-zinc-600">envoi auto à la fin</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** Slim footer: session usage as a tiny gauge + cost. Unobtrusive by design. */
 /** History browser: closed conversations still on disk, reopen as a tab. */
 function HistoryMenu(): React.JSX.Element {
@@ -949,6 +995,7 @@ export function ChatDock({
       </div>
 
       {/* Composer */}
+      <QueuedCard />
       <div className="shrink-0 border-t border-border p-2">
         {!!pending.length && (
           <div className="mb-1.5 flex gap-1">

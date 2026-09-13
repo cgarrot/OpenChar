@@ -272,6 +272,15 @@ class ChatBridge:
             await self._send(tab, {"type": "abort"})
         return {"id": tab_id, "cancelled": True}
 
+    async def steer(self, tab_id: str, message: str) -> dict[str, Any]:
+        """Inject a message mid-run: pi delivers it after the current tool calls, before the
+        next LLM turn — the non-destructive 'cut in' of the queued-message UI."""
+        tab = self._tab(tab_id)
+        await self._ensure_process(tab)
+        await self._send(tab, {"id": uuid.uuid4().hex[:8], "type": "steer",
+                                "message": str(message)})
+        return {"id": tab_id, "steered": True}
+
     async def set_model(self, tab_id: str, model: str) -> dict[str, Any]:
         """model is 'provider/id' (as listed by chat:models)."""
         tab = self._tab(tab_id)
@@ -880,6 +889,7 @@ def register_chat_handlers(rpc: Any, chat: ChatBridge) -> None:
     reg("chat:renameTab", lambda tab_id, title, auto=False: chat.rename_tab(tab_id, title, auto))
     reg("chat:prompt", lambda tab_id, message, images=None, folder="":
         chat.prompt(tab_id, message, images or [], folder))
+    reg("chat:steer", lambda tab_id, message: chat.steer(tab_id, message))
     reg("chat:cancel", lambda tab_id: chat.cancel(tab_id))
     reg("chat:history", lambda tab_id: chat.history(tab_id))
     reg("chat:setModel", lambda tab_id, model: chat.set_model(tab_id, model))

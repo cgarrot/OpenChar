@@ -35,6 +35,8 @@ interface ChatState {
   loaded: Record<string, boolean>
   /** Unsent composer text per tab — survives tab switches and reloads. */
   drafts: Record<string, string>
+  /** One queued message per tab, sent when the run ends (or steered in early). */
+  queued: Record<string, string>
   error: string | null
   /** Attachments staged in the composer: object URLs for display + the pending Files. */
   pending: Array<{ file: File; url: string }>
@@ -44,6 +46,9 @@ interface ChatState {
   editing: { entryId: string; original: string } | null
   startEditing: (entryId: string, original: string) => void
   cancelEditing: () => void
+  unqueue: (tabId: string) => void
+  editQueued: (tabId: string) => void
+  steerQueued: (tabId: string) => Promise<void>
   /** Fork from a past user message and replay it verbatim on the fresh branch. */
   replayFrom: (entryId: string, text: string) => Promise<void>
   /** Closed conversations (newest first) + reopen. */
@@ -141,6 +146,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   threads: {},
   loaded: {},
   drafts: {},
+  queued: {},
   error: null,
   pending: [],
   folder: null,
@@ -169,6 +175,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // After a run settles, rebind entryIds (fork/copy menus) by re-reading the thread's
         // history — live entries lack entryIds until the session file is re-read.
         if (current === event.tabId) {
+          const pendingMsg = get().queued[current]
+          if (pendingMsg !== undefined) {
+            const rest = { ...get().queued } as Record<string, string>
+            delete rest[current]
+            set({ queued: rest })
+            void studio()
+              .chat.prompt(current, pendingMsg)
+              .then((res2) => {
+                if (!res2.ok) set({ error: resultError(res2) })
+              })
+          }
           const thread = get().threads[current] ?? []
           if (thread.some((e) => e.kind === 'user' && !e.entryId)) {
             set({ loaded: { ...get().loaded, [current]: false } })
@@ -401,6 +418,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().setDraft(original)
   },
 
+  unqueue: (tabId) => {
+    const rest = { ...get().queued } as Record<string, string>
+    delete rest[tabId]
+    set({ queued: rest })
+  },
+
+  editQueued: (tabId) => {
+    const text = get().queued[tabId]
+    if (text === undefined) return
+    get().unqueue(tabId)
+    set({ activeId: tabId })
+    get().setDraft(text)
+  },
+
+  steerQueued: async (tabId) => {
+    const text = get().queued[tabId]
+    if (text === undefined) return
+    get().unqueue(tabId)
+    const res = await studio().chat.steer(tabId, text)
+    if (!res.ok) set({ error: resultError(res) })
+  },
+
   cancelEditing: () => {
     set({ editing: null })
     get().setDraft('')
@@ -502,7 +541,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   send: async () => {
-    const { activeId, pending, folder } = get()
+    const { activeId, pending, folder, editing } = get()
     const draft = (activeId ? get().drafts[activeId] : '') ?? ''
     if (!activeId || (!draft.trim() && !pending.length)) return
     const text = draft.trim()
@@ -538,6 +577,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ],
       },
     })
+    const state = get().tabs.find((t) => t.id === activeId)?.state
+    if (state === 'streaming' && !editing) {
+      // File d'attente : affichée au-dessus du composer — envoyée à la fin du run,
+      // ou steerable immédiatement (injectée entre les tool calls en cours).
+      set({ queued: { ...get().queued, [activeId]: text } })
+      return
+    }
+    if (editing) {
+      set({
+        editing: null,
+        loaded: { ...get().loaded, [activeId]: false },
+        threads: { ...get().threads, [activeId]: [] },
+      })
+      const res = await studio().chat.forkResend(activeId, editing.entryId, message)
+      if (!res.ok) set({ error: resultError(res) })
+      else await get().selectTab(activeId)
+      return
+    }
     const res = await studio().chat.prompt(activeId, message, images, folder ?? undefined)
     if (!res.ok) set({ error: resultError(res) })
   },
