@@ -313,6 +313,7 @@ function RefsBar(): React.JSX.Element {
   const addFiles = useChatStore((s) => s.addFiles)
   const refFileRef = useRef<HTMLInputElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
   if (!activeId) return <></>
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-panel/50 px-2 py-1.5">
@@ -334,13 +335,42 @@ function RefsBar(): React.JSX.Element {
           </button>
         </span>
       ))}
-      <button
-        onClick={() => refFileRef.current?.click()}
-        className="rounded-full border border-dashed border-zinc-600 px-2 py-0.5 text-[11px] text-zinc-500 hover:border-zinc-400 hover:text-zinc-300"
-        title="Ajouter des fichiers en référence (markdown, texte…) — ou glisse-les sur le chat ; pour un dossier, utilise le menu ☰"
-      >
-        + référence
-      </button>
+      <div className="relative">
+        <button
+          onClick={() => setAddOpen(!addOpen)}
+          className="rounded-full border border-dashed border-zinc-600 px-2 py-0.5 text-[11px] text-zinc-500 hover:border-zinc-400 hover:text-zinc-300"
+          title="Ajouter une référence : dossier (chemin) ou fichiers — tu peux aussi glisser des fichiers sur le chat"
+        >
+          + référence
+        </button>
+        {addOpen && (
+          <div className="absolute left-0 top-full z-30 mt-1 w-60 rounded border border-border bg-surface p-1 shadow-xl">
+            <button
+              onClick={() => {
+                setAddOpen(false)
+                const path = window.prompt('Chemin du dossier (ou fichier) à garder en référence :')
+                if (path && path.trim()) void addRef(activeId, path.trim())
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+              title="Référencer un dossier local (arborescence injectée une fois, puis explorée par l'agent)"
+            >
+              <span className="w-4 text-center">📁</span>
+              Dossier (chemin)
+            </button>
+            <button
+              onClick={() => {
+                setAddOpen(false)
+                refFileRef.current?.click()
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+              title="Choisir des fichiers (markdown, texte…) — ou glisse-les simplement sur le chat"
+            >
+              <span className="w-4 text-center">📄</span>
+              Fichiers…
+            </button>
+          </div>
+        )}
+      </div>
       <input
         ref={refFileRef}
         type="file"
@@ -373,17 +403,6 @@ function RefsBar(): React.JSX.Element {
               <span className="block text-[10px] text-zinc-600">
                 Mêmes dossiers/références, modèle et thinking — session vierge
               </span>
-            </button>
-            <button
-              onClick={() => {
-                setMenuOpen(false)
-                const path = window.prompt('Chemin d’un dossier ou fichier à garder en référence :')
-                if (path && path.trim()) void addRef(activeId, path.trim())
-              }}
-              className="mt-1 block w-full border-t border-border/60 pt-1 text-left text-[11px] text-zinc-500 hover:text-zinc-300"
-              title="Référencer par chemin absolu (dossier ou fichier local)"
-            >
-              📁 ajouter un chemin…
             </button>
           </div>
         )}
