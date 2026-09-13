@@ -164,8 +164,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           .then((res) => {
             if (res.ok) set({ tabs: res.value })
           })
-        // Refresh usage after each run settles (cost/context moved).
         const current = get().activeId
+        // After a run settles, rebind entryIds (fork/copy menus) by re-reading the thread's
+        // history — live entries lack entryIds until the session file is re-read.
+        if (current === event.tabId) {
+          const thread = get().threads[current] ?? []
+          if (thread.some((e) => e.kind === 'user' && !e.entryId)) {
+            set({ loaded: { ...get().loaded, [current]: false } })
+            void get().selectTab(current)
+          }
+        }
+        // Refresh usage after each run settles (cost/context moved).
         if (current === event.tabId)
           void studio()
             .chat.stats(current)

@@ -84,7 +84,7 @@ function ToolCardView({ tool, args, result, running }: ToolCard): React.JSX.Elem
   )
 }
 
-/** Discreet per-message actions (hover): copy, edit & resend, replay-from-here. */
+/** Discreet per-message actions: copy always; edit & replay once the entryId is bound. */
 function UserBubbleMenu({
   text,
   entryId,
@@ -93,10 +93,9 @@ function UserBubbleMenu({
   text: string
   entryId?: string
   onEdit?: () => void
-}): React.JSX.Element | null {
+}): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
-  if (!entryId) return null
   const item = (label: string, icon: string, title: string, action: () => void) => (
     <button
       key={label}
@@ -115,8 +114,8 @@ function UserBubbleMenu({
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className={`rounded px-1 text-xs text-zinc-600 transition-opacity hover:text-zinc-300 ${
-          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        className={`rounded px-1 text-xs transition-opacity ${
+          open ? 'text-zinc-300 opacity-100' : 'text-zinc-600 opacity-40 hover:opacity-100'
         }`}
         title="Actions du message"
       >
@@ -135,18 +134,36 @@ function UserBubbleMenu({
               })
             },
           )}
-          {onEdit &&
-            item(
-              'Modifier & renvoyer',
-              '✎',
-              'Éditer ce message — la conversation repart de ici',
-              onEdit,
-            )}
-          {item(
-            'Rejouer depuis ici',
-            '↻',
-            'Fourche une nouvelle branche à ce message et le renvoie tel quel',
-            () => void useChatStore.getState().replayFrom(entryId, text),
+          {entryId && onEdit && (
+            <button
+              onClick={() => {
+                setOpen(false)
+                onEdit()
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+              title="Éditer ce message — la conversation repart de ici"
+            >
+              <span className="w-4 text-center">✎</span>
+              Modifier & renvoyer
+            </button>
+          )}
+          {entryId && (
+            <button
+              onClick={() => {
+                setOpen(false)
+                void useChatStore.getState().replayFrom(entryId, text)
+              }}
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+              title="Fourche une nouvelle branche à ce message et le renvoie tel quel"
+            >
+              <span className="w-4 text-center">↻</span>
+              Rejouer depuis ici
+            </button>
+          )}
+          {!entryId && (
+            <div className="px-2 py-1 text-[10px] text-zinc-600">
+              fork/édition disponibles après la réponse
+            </div>
           )}
         </div>
       )}
@@ -171,13 +188,15 @@ function EntryView({
             ))}
           </div>
         )}
-        <div className="flex items-center gap-1">
-          <UserBubbleMenu
-            text={entry.text}
-            entryId={entry.entryId}
-            onEdit={onEdit ? () => onEdit(entry.text) : undefined}
-          />
-          <div className="max-w-[85%] whitespace-pre-wrap rounded-lg bg-zinc-700/60 px-3 py-2 text-sm text-zinc-100">
+        <div className="relative max-w-[85%]">
+          <div className="absolute -left-7 top-1.5 z-10">
+            <UserBubbleMenu
+              text={entry.text}
+              entryId={entry.entryId}
+              onEdit={onEdit ? () => onEdit(entry.text) : undefined}
+            />
+          </div>
+          <div className="whitespace-pre-wrap rounded-lg bg-zinc-700/60 px-3 py-2 text-sm text-zinc-100">
             {entry.text}
           </div>
         </div>
