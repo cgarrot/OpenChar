@@ -219,7 +219,8 @@ def create_app(
     _quiet_access_log()
     _pin_web_mime_types()
     registry = registry or build_default_registry()
-    cache = cache or InMemoryCache()
+    # Disk-backed: a restart must not re-execute (and re-bill) already-rendered upstream nodes.
+    cache = cache or DiskCache(Path(".inline-node-cache.json"))
     policy = policy or MemoryPolicy()
     # Empty by default so every existing caller keeps working: a node type with no provider simply
     # reports no model requirements, which is what a torch-less install already showed.

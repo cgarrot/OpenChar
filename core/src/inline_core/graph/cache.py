@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from ..takes import Take
@@ -32,6 +33,40 @@ class InMemoryCache(NodeCache):
 
     def put(self, key: str, takes: list[Take]) -> None:
         self._store[key] = list(takes)
+
+
+class DiskCache(NodeCache):
+    """An in-memory cache mirrored to JSON, so a server restart does not empty it.
+
+    Without this, re-running a downstream node after a restart re-executes its whole upstream
+    chain — hosted-API credits spent twice for identical renders (session review, 2026-09-13).
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._memory = InMemoryCache()
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            for key, takes in (raw or {}).items():
+                self._memory.put(key, [Take(**take) for take in takes if isinstance(take, dict)])
+        except (OSError, ValueError, TypeError):
+            pass  # absent or corrupt: start cold rather than refuse to boot
+
+    def get(self, key: str) -> list[Take] | None:
+        return self._memory.get(key)
+
+    def put(self, key: str, takes: list[Take]) -> None:
+        self._memory.put(key, takes)
+        try:
+            payload = {
+                cache_key: [take.__dict__ for take in cached]
+                for cache_key, cached in self._memory._store.items()  # noqa: SLF001 - same module
+            }
+            tmp = self._path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            tmp.replace(self._path)
+        except OSError:
+            pass  # persistence is best-effort; the run itself already succeeded
 
 
 def _canonical_params(node: Node, registry: Registry) -> dict[str, Any]:
