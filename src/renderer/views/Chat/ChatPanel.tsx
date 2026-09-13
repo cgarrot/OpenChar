@@ -624,7 +624,12 @@ function useDictation(onError: (message: string) => void): {
         return
       }
       const text = res.value.text
-      if (text) useChatStore.getState().setDraft((useChatStore.getState().draft + text).trimStart())
+      const store = useChatStore.getState()
+      const id = store.activeId
+      if (text && id) {
+        const current = store.drafts[id] ?? ''
+        store.setDraft((current + text).trimStart())
+      }
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -702,7 +707,7 @@ export function ChatDock({
   const tabs = useChatStore((s) => s.tabs)
   const activeId = useChatStore((s) => s.activeId)
   const thread = useChatStore((s) => (s.activeId ? s.threads[s.activeId] : undefined)) ?? NO_THREAD
-  const draft = useChatStore((s) => s.draft)
+  const draft = useChatStore((s) => (s.activeId ? (s.drafts[s.activeId] ?? '') : ''))
   const error = useChatStore((s) => s.error)
   const pending = useChatStore((s) => s.pending)
   const activeState = tabs.find((t) => t.id === activeId)?.state

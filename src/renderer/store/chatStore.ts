@@ -33,7 +33,8 @@ interface ChatState {
   activeId: string | null
   threads: Record<string, ThreadEntry[]>
   loaded: Record<string, boolean>
-  draft: string
+  /** Unsent composer text per tab — survives tab switches and reloads. */
+  drafts: Record<string, string>
   error: string | null
   /** Attachments staged in the composer: object URLs for display + the pending Files. */
   pending: Array<{ file: File; url: string }>
@@ -139,7 +140,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeId: null,
   threads: {},
   loaded: {},
-  draft: '',
+  drafts: {},
   error: null,
   pending: [],
   folder: null,
@@ -267,7 +268,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   selectTab: async (id) => {
-    set({ activeId: id, error: null })
+    let draft = get().drafts[id] ?? ''
+    try {
+      draft = localStorage.getItem(`chat-draft-${id}`) ?? draft
+    } catch {
+      /* ignore */
+    }
+    set({ activeId: id, error: null, drafts: { ...get().drafts, [id]: draft } })
     void get().loadStats(id)
     if (get().loaded[id]) return
     const res = await studio().chat.history(id)
@@ -342,7 +349,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
   },
 
-  setDraft: (text) => set({ draft: text }),
+  setDraft: (text) => {
+    const id = get().activeId
+    if (!id) return
+    set({ drafts: { ...get().drafts, [id]: text } })
+    try {
+      localStorage.setItem(`chat-draft-${id}`, text)
+    } catch {
+      /* storage plein/prive : survit au moins au changement d'onglet */
+    }
+  },
 
   addFiles: async (files) => {
     // Images go to the composer (vision input); anything else (md, txt, pdf...) becomes a
@@ -380,10 +396,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setFolder: (folder) => set({ folder: folder || null }),
 
-  startEditing: (entryId: string, original: string) =>
-    set({ editing: { entryId, original }, draft: original, error: null }),
+  startEditing: (entryId: string, original: string) => {
+    set({ editing: { entryId, original }, error: null })
+    get().setDraft(original)
+  },
 
-  cancelEditing: () => set({ editing: null, draft: '' }),
+  cancelEditing: () => {
+    set({ editing: null })
+    get().setDraft('')
+  },
 
   loadArchived: async () => {
     const res = await studio().chat.archivedSessions()
@@ -475,11 +496,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: 'Rien de sélectionné sur le canvas.' })
       return
     }
-    set({ draft: `${block}\n(Demande utilisateur:) ${get().draft}`, error: null })
+    set({ error: null })
+    const cur = get().activeId ? (get().drafts[get().activeId as string] ?? '') : ''
+    get().setDraft(`${block}\n(Demande utilisateur:) ${cur}`)
   },
 
   send: async () => {
-    const { activeId, draft, pending, folder } = get()
+    const { activeId, pending, folder } = get()
+    const draft = (activeId ? get().drafts[activeId] : '') ?? ''
     if (!activeId || (!draft.trim() && !pending.length)) return
     const text = draft.trim()
     // Auto-contexte : la sélection du canvas accompagne chaque message (l'agent sait de
@@ -496,8 +520,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       URL.revokeObjectURL(p.url)
     }
     const threads = get().threads
+    try {
+      if (activeId) localStorage.removeItem(`chat-draft-${activeId}`)
+    } catch {
+      /* ignore */
+    }
     set({
-      draft: '',
+      drafts: activeId ? { ...get().drafts, [activeId]: '' } : get().drafts,
       pending: [],
       folder: null,
       error: null,
