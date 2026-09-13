@@ -3,6 +3,7 @@
  * the same graph tools as the user (openchar extension) — what it builds lands on the canvas.
  */
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useChatStore, type ThreadEntry, type ToolCard } from '../../store/chatStore'
@@ -84,7 +85,9 @@ function ToolCardView({ tool, args, result, running }: ToolCard): React.JSX.Elem
   )
 }
 
-/** Discreet per-message actions: copy always; edit & replay once the entryId is bound. */
+/** Discreet per-message actions: copy always; edit & replay once the entryId is bound.
+ * Rendered through a portal: the thread scrolls (overflow-y-auto), which would clip any
+ * in-flow dropdown at the panel's edge - fixed positioning escapes it. */
 function UserBubbleMenu({
   text,
   entryId,
@@ -96,6 +99,33 @@ function UserBubbleMenu({
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [pos, setPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 })
+  const buttonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const place = (): void => {
+      const rect = buttonRef.current?.getBoundingClientRect()
+      if (rect) setPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+    }
+    place()
+    const onDown = (e: MouseEvent): void => {
+      const target = e.target as HTMLElement
+      if (!target.closest('.user-bubble-menu') && !target.closest('[data-bubble-menu]')) {
+        setOpen(false)
+      }
+    }
+    const onClose = (): void => setOpen(false)
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('scroll', onClose, true)
+    window.addEventListener('resize', onClose)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('scroll', onClose, true)
+      window.removeEventListener('resize', onClose)
+    }
+  }, [open])
+
   const item = (label: string, icon: string, title: string, action: () => void) => (
     <button
       key={label}
@@ -110,9 +140,11 @@ function UserBubbleMenu({
       {label}
     </button>
   )
+
   return (
-    <div className="relative">
+    <div className="relative" data-bubble-menu>
       <button
+        ref={buttonRef}
         onClick={() => setOpen(!open)}
         className={`rounded px-1 text-xs transition-opacity ${
           open ? 'text-zinc-300 opacity-100' : 'text-zinc-600 opacity-40 hover:opacity-100'
@@ -121,52 +153,57 @@ function UserBubbleMenu({
       >
         ⋯
       </button>
-      {open && (
-        <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded border border-border bg-surface p-1 shadow-xl">
-          {item(
-            copied ? 'Copié ✓' : 'Copier le message',
-            '⧉',
-            'Copier le texte dans le presse-papier',
-            () => {
-              void navigator.clipboard.writeText(text).then(() => {
-                setCopied(true)
-                setTimeout(() => setCopied(false), 1500)
-              })
-            },
-          )}
-          {entryId && onEdit && (
-            <button
-              onClick={() => {
-                setOpen(false)
-                onEdit()
-              }}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
-              title="Éditer ce message — la conversation repart de ici"
-            >
-              <span className="w-4 text-center">✎</span>
-              Modifier & renvoyer
-            </button>
-          )}
-          {entryId && (
-            <button
-              onClick={() => {
-                setOpen(false)
-                void useChatStore.getState().replayFrom(entryId, text)
-              }}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
-              title="Fourche une nouvelle branche à ce message et le renvoie tel quel"
-            >
-              <span className="w-4 text-center">↻</span>
-              Rejouer depuis ici
-            </button>
-          )}
-          {!entryId && (
-            <div className="px-2 py-1 text-[10px] text-zinc-600">
-              fork/édition disponibles après la réponse
-            </div>
-          )}
-        </div>
-      )}
+      {open &&
+        createPortal(
+          <div
+            className="user-bubble-menu fixed z-50 w-52 rounded border border-border bg-surface p-1 shadow-xl"
+            style={{ top: pos.top, right: pos.right }}
+          >
+            {item(
+              copied ? 'Copié ✓' : 'Copier le message',
+              '⧉',
+              'Copier le texte dans le presse-papier',
+              () => {
+                void navigator.clipboard.writeText(text).then(() => {
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 1500)
+                })
+              },
+            )}
+            {entryId && onEdit && (
+              <button
+                onClick={() => {
+                  setOpen(false)
+                  onEdit()
+                }}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+                title="Éditer ce message - la conversation repart de ici"
+              >
+                <span className="w-4 text-center">✎</span>
+                Modifier & renvoyer
+              </button>
+            )}
+            {entryId && (
+              <button
+                onClick={() => {
+                  setOpen(false)
+                  void useChatStore.getState().replayFrom(entryId, text)
+                }}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+                title="Fourche une nouvelle branche à ce message et le renvoie tel quel"
+              >
+                <span className="w-4 text-center">↻</span>
+                Rejouer depuis ici
+              </button>
+            )}
+            {!entryId && (
+              <div className="px-2 py-1 text-[10px] text-zinc-600">
+                fork/édition disponibles après la réponse
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
