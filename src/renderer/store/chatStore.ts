@@ -344,15 +344,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setDraft: (text) => set({ draft: text }),
 
-  addFiles: (files) => {
+  addFiles: async (files) => {
+    // Images go to the composer (vision input); anything else (md, txt, pdf...) becomes a
+    // persistent reference chip - uploaded server-side, the agent reads it by name.
+    const activeId = get().activeId
     const images = files.filter((f) => f.type.startsWith('image/'))
-    if (!images.length) return
-    set({
-      pending: [
-        ...get().pending,
-        ...images.map((file) => ({ file, url: URL.createObjectURL(file) })),
-      ],
-    })
+    const others = files.filter((f) => !f.type.startsWith('image/'))
+    if (images.length) {
+      set({
+        pending: [
+          ...get().pending,
+          ...images.map((file) => ({ file, url: URL.createObjectURL(file) })),
+        ],
+      })
+    }
+    if (others.length && activeId) {
+      for (const file of others) {
+        const data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onloadend = (): void => resolve(String(reader.result).split(',')[1] ?? '')
+          reader.onerror = (): void => reject(new Error('lecture impossible'))
+          reader.readAsDataURL(file)
+        })
+        const res = await studio().chat.uploadRef(activeId, file.name, data)
+        if (!res.ok) set({ error: resultError(res) })
+        else set({ tabs: get().tabs.map((t) => (t.id === activeId ? res.value : t)) })
+      }
+    }
   },
 
   removeFile: (url) => {

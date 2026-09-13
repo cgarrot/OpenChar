@@ -348,6 +348,7 @@ export const IpcChannels = {
     restoreSession: 'chat:restoreSession',
     addRef: 'chat:addRef',
     removeRef: 'chat:removeRef',
+    uploadRef: 'chat:uploadRef',
   },
   events: {
     /** Main → renderer: the asset library changed (e.g. a video poster/transcode is ready). */
@@ -1045,6 +1046,8 @@ export interface InlineStudioApi {
     /** Add a persistent reference (dir or file) prepended as context to every prompt. */
     addRef(tabId: string, path: string): Promise<Result<ChatTab>>
     removeRef(tabId: string, path: string): Promise<Result<ChatTab>>
+    /** A dropped file (no absolute path in the browser): stored server-side, real name kept. */
+    uploadRef(tabId: string, name: string, data: string): Promise<Result<ChatTab>>
   }
   /** Resolve the absolute path of a File dropped from the OS (Electron webUtils). Sync. */
   getPathForFile(file: File): string

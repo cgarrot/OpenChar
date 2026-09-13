@@ -539,6 +539,33 @@ class ChatBridge:
             self._save_tabs()
         return tab.to_json()
 
+    def upload_ref(self, tab_id: str, name: str, data: str) -> dict[str, Any]:
+        """A dropped file (browser files carry no absolute path): stored under the app's chat
+        refs dir with its real name, then attached as a persistent reference the agent reads."""
+        import binascii
+
+        tab = self._tab(tab_id)
+        safe = re.sub(r"[^A-Za-z0-9._ -]", "_", str(name or "fichier"))[:120] or "fichier"
+        try:
+            blob = base64.b64decode(str(data), validate=False)
+        except (binascii.Error, ValueError) as error:
+            raise ChatError(f"Fichier illisible : {error}") from None
+        if len(blob) > 20 * 1024 * 1024:
+            raise ChatError("Fichier trop lourd (max 20 Mo) — donne plutôt un chemin/dossier.")
+        folder = self._root / "refs"
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / safe
+        stem, dot, ext = safe.rpartition(".")
+        counter = 2
+        while target.exists():
+            target = folder / f"{stem or safe}-{counter}{dot and '.' + ext}"
+            counter += 1
+        target.write_bytes(blob)
+        if str(target) not in tab.refs:
+            tab.refs.append(str(target))
+            self._save_tabs()
+        return tab.to_json()
+
     def remove_ref(self, tab_id: str, path: str) -> dict[str, Any]:
         tab = self._tab(tab_id)
         tab.refs = [r for r in tab.refs if r != str(path)]
@@ -866,3 +893,4 @@ def register_chat_handlers(rpc: Any, chat: ChatBridge) -> None:
     reg("chat:restoreSession", lambda file, title="": chat.restore_session(file, title))
     reg("chat:addRef", lambda tab_id, path: chat.add_ref(tab_id, path))
     reg("chat:removeRef", lambda tab_id, path: chat.remove_ref(tab_id, path))
+    reg("chat:uploadRef", lambda tab_id, name, data: chat.upload_ref(tab_id, name, data))

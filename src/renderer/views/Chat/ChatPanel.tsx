@@ -310,6 +310,8 @@ function RefsBar(): React.JSX.Element {
   const addRef = useChatStore((s) => s.addRef)
   const removeRef = useChatStore((s) => s.removeRef)
   const newTabFromContext = useChatStore((s) => s.newTabFromContext)
+  const addFiles = useChatStore((s) => s.addFiles)
+  const refFileRef = useRef<HTMLInputElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   if (!activeId) return <></>
   return (
@@ -333,15 +335,22 @@ function RefsBar(): React.JSX.Element {
         </span>
       ))}
       <button
-        onClick={() => {
-          const path = window.prompt('Chemin d’un dossier ou fichier à garder en référence :')
-          if (path && path.trim()) void addRef(activeId, path.trim())
-        }}
+        onClick={() => refFileRef.current?.click()}
         className="rounded-full border border-dashed border-zinc-600 px-2 py-0.5 text-[11px] text-zinc-500 hover:border-zinc-400 hover:text-zinc-300"
-        title="Ajouter une référence persistante (dossier ou fichier) — injectée dans chaque message"
+        title="Ajouter des fichiers en référence (markdown, texte…) — ou glisse-les sur le chat ; pour un dossier, utilise le menu ☰"
       >
         + référence
       </button>
+      <input
+        ref={refFileRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(e) => {
+          void addFiles(Array.from(e.target.files ?? []))
+          e.target.value = ''
+        }}
+      />
       <div className="relative ml-auto">
         <button
           onClick={() => setMenuOpen(!menuOpen)}
@@ -364,6 +373,17 @@ function RefsBar(): React.JSX.Element {
               <span className="block text-[10px] text-zinc-600">
                 Mêmes dossiers/références, modèle et thinking — session vierge
               </span>
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(false)
+                const path = window.prompt('Chemin d’un dossier ou fichier à garder en référence :')
+                if (path && path.trim()) void addRef(activeId, path.trim())
+              }}
+              className="mt-1 block w-full border-t border-border/60 pt-1 text-left text-[11px] text-zinc-500 hover:text-zinc-300"
+              title="Référencer par chemin absolu (dossier ou fichier local)"
+            >
+              📁 ajouter un chemin…
             </button>
           </div>
         )}
@@ -714,11 +734,6 @@ export function ChatDock({
     if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
   }, [thread])
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    addFiles(Array.from(e.dataTransfer.files))
-  }
-
   if (collapsed) {
     return (
       <div className="flex h-full w-10 shrink-0 flex-col items-center gap-2 border-l border-border bg-surface py-2">
@@ -742,7 +757,15 @@ export function ChatDock({
   }
 
   return (
-    <div className="relative flex h-full w-full min-h-0 shrink-0 flex-col border-l border-border bg-surface">
+    <div
+      className="relative flex h-full w-full min-h-0 shrink-0 flex-col border-l border-border bg-surface"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        void addFiles(Array.from(e.dataTransfer.files))
+      }}
+    >
       {onResize && (
         <div
           role="separator"
@@ -902,11 +925,7 @@ export function ChatDock({
       </div>
 
       {/* Composer */}
-      <div
-        className="shrink-0 border-t border-border p-2"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={onDrop}
-      >
+      <div className="shrink-0 border-t border-border p-2">
         {!!pending.length && (
           <div className="mb-1.5 flex gap-1">
             {pending.map((p) => (
