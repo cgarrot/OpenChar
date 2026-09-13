@@ -8,7 +8,13 @@ import { studio } from '@/lib/studio'
 import { ipcErrorMessage } from '../lib/ipcError'
 import { useUiStore } from './uiStore'
 import { useMoodboardStore } from './moodboardStore'
-import type { ChatEvent, ChatModelInfo, ChatSessionStats, ChatTab } from '@shared/ipc'
+import type {
+  ChatArchivedSession,
+  ChatEvent,
+  ChatModelInfo,
+  ChatSessionStats,
+  ChatTab,
+} from '@shared/ipc'
 
 export interface ToolCard {
   tool: string
@@ -39,6 +45,10 @@ interface ChatState {
   cancelEditing: () => void
   /** Fork from a past user message and replay it verbatim on the fresh branch. */
   replayFrom: (entryId: string, text: string) => Promise<void>
+  /** Closed conversations (newest first) + reopen. */
+  archived: ChatArchivedSession[]
+  loadArchived: () => Promise<void>
+  restoreSession: (file: string, title: string) => Promise<void>
   /** Model catalogue for the picker, per tab (loaded on demand). */
   models: ChatModelInfo[]
 
@@ -138,6 +148,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /** Model catalogue for the picker, per tab (loaded on demand). */
   models: [] as ChatModelInfo[],
   stats: null as ChatSessionStats | null,
+  archived: [] as ChatArchivedSession[],
 
   subscribeToEvents: () => {
     // Agent-side canvas mutations push a board refresh, so the user watches the work live.
@@ -346,6 +357,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ editing: { entryId, original }, draft: original, error: null }),
 
   cancelEditing: () => set({ editing: null, draft: '' }),
+
+  loadArchived: async () => {
+    const res = await studio().chat.archivedSessions()
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    set({ archived: res.value })
+  },
+
+  restoreSession: async (file, title) => {
+    const res = await studio().chat.restoreSession(file, title)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    await get().loadTabs()
+    await get().selectTab(res.value.id)
+  },
 
   replayFrom: async (entryId, text) => {
     const activeId = get().activeId

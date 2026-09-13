@@ -344,6 +344,8 @@ export const IpcChannels = {
     transcribe: 'chat:transcribe',
     forkResend: 'chat:forkResend',
     forkables: 'chat:forkables',
+    archivedSessions: 'chat:archivedSessions',
+    restoreSession: 'chat:restoreSession',
     addRef: 'chat:addRef',
     removeRef: 'chat:removeRef',
   },
@@ -504,6 +506,16 @@ export interface ChatModelInfo {
   id: string
   name: string
   thinking: boolean
+}
+
+/** One closed conversation available to reopen. */
+export interface ChatArchivedSession {
+  file: string
+  title: string
+  preview: string
+  messages: number
+  bytes: number
+  modified: number
 }
 
 /** Session usage of a chat tab (pi get_session_stats). */
@@ -1026,6 +1038,10 @@ export interface InlineStudioApi {
     ): Promise<Result<{ id: string; forked: boolean }>>
     /** User messages available for forking: (entryId, text) pairs. */
     forkables(tabId: string): Promise<Result<Array<{ entryId: string; text: string }>>>
+    /** Closed conversations still on disk, newest first. */
+    archivedSessions(): Promise<Result<ChatArchivedSession[]>>
+    /** Reopen an archived session as a new tab (history preserved). */
+    restoreSession(file: string, title?: string): Promise<Result<ChatTab>>
     /** Add a persistent reference (dir or file) prepended as context to every prompt. */
     addRef(tabId: string, path: string): Promise<Result<ChatTab>>
     removeRef(tabId: string, path: string): Promise<Result<ChatTab>>

@@ -405,6 +405,57 @@ function TabSettingsBar(): React.JSX.Element {
 }
 
 /** Slim footer: session usage as a tiny gauge + cost. Unobtrusive by design. */
+/** History browser: closed conversations still on disk, reopen as a tab. */
+function HistoryMenu(): React.JSX.Element {
+  const archived = useChatStore((s) => s.archived)
+  const loadArchived = useChatStore((s) => s.loadArchived)
+  const restoreSession = useChatStore((s) => s.restoreSession)
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="relative shrink-0">
+      <button
+        onClick={() => {
+          if (!open) void loadArchived()
+          setOpen(!open)
+        }}
+        className="rounded px-1.5 py-1 text-xs text-zinc-400 hover:bg-panel hover:text-white"
+        title="Historique des conversations"
+      >
+        🕘
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 max-h-96 w-80 overflow-y-auto rounded border border-border bg-surface p-1 shadow-xl">
+          {!archived.length && (
+            <div className="px-2 py-2 text-[11px] text-zinc-500">
+              Aucune conversation archivée — fermer un onglet l'archive ici.
+            </div>
+          )}
+          {archived.map((s) => (
+            <button
+              key={s.file}
+              onClick={() => {
+                setOpen(false)
+                void restoreSession(s.file, s.title)
+              }}
+              className="block w-full rounded px-2 py-1.5 text-left hover:bg-panel"
+              title={`${s.title} — ${new Date(s.modified).toLocaleString()}`}
+            >
+              <span className="block truncate text-[11px] font-medium text-zinc-200">
+                {s.title}
+              </span>
+              <span className="block truncate text-[10px] text-zinc-500">{s.preview || '…'}</span>
+              <span className="text-[10px] text-zinc-600">
+                {new Date(s.modified).toLocaleDateString()} · {s.messages} msg ·{' '}
+                {(s.bytes / 1024).toFixed(0)} Ko
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function StatsFooter(): React.JSX.Element | null {
   const stats = useChatStore((s) => s.stats)
   if (!stats?.available) return null
@@ -701,6 +752,7 @@ export function ChatDock({
             {copied ? '✓' : '⧉'}
           </button>
         </div>
+        <HistoryMenu />
         {activeState && activeState !== 'idle' && activeState !== 'stopped' && (
           <button
             onClick={() => void cancel()}

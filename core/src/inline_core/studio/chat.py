@@ -31,8 +31,10 @@ logger = logging.getLogger("inline_core.studio.chat")
 #: Where the pi binary lives. PATH first, then the known pi-node install.
 _PI_FALLBACK = str(Path.home() / ".local/share/pi-node/node-v22.23.2-linux-x64/bin/pi")
 
-#: Seconds without any stdout line before a starting tab is considered broken.
-_STARTUP_TIMEOUT = 20.0
+#: Seconds without any stdout line before a starting tab is considered broken. Generous:
+#: extension-heavy pi setups (mesh, goals, webbridge…) flood UI requests during startup and can
+#: hold the first get_state — let alone a session switch — past 20s.
+_STARTUP_TIMEOUT = 45.0
 #: Pi frames can be huge (get_available_models lists every model with costs): the default
 #: 64 KiB asyncio readline limit raises LimitOverrunError and would kill the reader task.
 _STREAM_LIMIT = 16 * 1024 * 1024
@@ -189,6 +191,12 @@ class ChatBridge:
         tab = _Tab(uuid.uuid4().hex[:12], title, model, cwd,
                    refs=[str(r) for r in inp.get("refs", []) if r],
                    thinking=str(inp.get("thinking") or ""))
+        # Restoring an archived session: pre-point the tab at the existing .jsonl — the next
+        # prompt respawns pi and switch_session rewinds onto it.
+        if inp.get("sessionFile"):
+            candidate = self._sessions / Path(str(inp["sessionFile"])).name
+            if candidate.suffix == ".jsonl" and candidate.is_file():
+                tab.session_file = str(candidate)
         self._tabs[tab.id] = tab
         self._save_tabs()
         await self._ensure_process(tab)
@@ -467,6 +475,56 @@ class ChatBridge:
             if entry_id and text:
                 out.append({"entryId": str(entry_id), "text": str(text)})
         return out
+
+    def archived_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Session files not attached to any live tab — the closed conversations one can reopen."""
+        known = {t.session_file for t in self._tabs.values() if t.session_file}
+        out: list[dict[str, Any]] = []
+        files = sorted(self._sessions.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for path in files:
+            if str(path) in known:
+                continue
+            name, preview, count = "", "", 0
+            try:
+                with path.open(encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if entry.get("type") == "session_info" and entry.get("name"):
+                            candidate = str(entry["name"])
+                            if not candidate.startswith("mesh"):
+                                name = candidate
+                        message = entry.get("message") or {}
+                        if entry.get("type") == "message":
+                            count += 1
+                            if message.get("role") == "user" and not preview:
+                                content = message.get("content")
+                                preview = content if isinstance(content, str) else " ".join(
+                                    str(b.get("text", "")) for b in content or []
+                                    if isinstance(b, dict) and b.get("type") == "text"
+                                )
+                        if count > 400:
+                            break
+            except OSError:
+                continue
+            stat = path.stat()
+            out.append({
+                "file": path.name,
+                "title": name or path.stem[:19],
+                "preview": " ".join(preview.split())[:100],
+                "messages": count,
+                "bytes": stat.st_size,
+                "modified": int(stat.st_mtime * 1000),
+            })
+            if len(out) >= limit:
+                break
+        return out
+
+    async def restore_session(self, file: str, title: str = "") -> dict[str, Any]:
+        """Reopen an archived session as a new tab (history preserved via switch_session)."""
+        return await self.create_tab({"sessionFile": str(file), "title": title or None})
 
     def add_ref(self, tab_id: str, path: str) -> dict[str, Any]:
         tab = self._tab(tab_id)
@@ -804,5 +862,7 @@ def register_chat_handlers(rpc: Any, chat: ChatBridge) -> None:
     reg("chat:transcribe", lambda inp: chat.transcribe(inp))
     reg("chat:forkResend", lambda tab_id, entry_id, message: chat.fork_resend(tab_id, entry_id, message))
     reg("chat:forkables", lambda tab_id: chat.forkables(tab_id))
+    reg("chat:archivedSessions", lambda limit=50: chat.archived_sessions(int(limit)))
+    reg("chat:restoreSession", lambda file, title="": chat.restore_session(file, title))
     reg("chat:addRef", lambda tab_id, path: chat.add_ref(tab_id, path))
     reg("chat:removeRef", lambda tab_id, path: chat.remove_ref(tab_id, path))
