@@ -746,6 +746,11 @@ class ChatBridge:
             tab.state = "idle"
             self._emit(tab, {"kind": "state"})
             return
+        if kind == "compaction_end":
+            # The session summary may have dropped the persistent-refs block: re-inject it on
+            # the next prompt so a long conversation never loses its folder context.
+            tab.refs_sent = ""
+            return
         if kind == "message_update":
             delta = frame.get("assistantMessageEvent", {}) or {}
             if delta.get("type") == "text_delta":

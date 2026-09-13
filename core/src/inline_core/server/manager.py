@@ -77,6 +77,25 @@ class _BroadcastEmitter(ProgressEmitter):
         self._manager.publish(self._record, event)
 
 
+def _needs_local_models(graph: Graph, registry: Registry) -> bool:
+    """True when the run's closure contains a node that loads local model weights — those
+    graphs serialize on one GPU. Hosted nodes (extension-provided, network-bound like
+    nanogpt/*) run in parallel with everything."""
+    from ..graph.schema import PortKind  # noqa: PLC0415 - avoid a cycle at import time
+
+    for node in graph.nodes:
+        try:
+            descriptor = registry.get(node.type)
+        except Exception:  # noqa: BLE001 - unknown types fail validation later
+            continue
+        if descriptor.source.startswith("ext:"):
+            continue  # extensions here are hosted-API nodes (no local weights)
+        for port in descriptor.inputs:
+            if port.kind in (PortKind.MODEL, PortKind.VAE, PortKind.TEXT_ENCODER, PortKind.LORA):
+                return True
+    return False
+
+
 class RunManager:
     def __init__(
         self,
@@ -100,6 +119,11 @@ class RunManager:
         self._takes = takes
         self._observers: list[RunObserver] = []
         self._order: list[str] = []
+        #: (lock, predicate) pairs: a run whose graph matches a predicate holds that lock for its
+        #: whole execution. Wired with the single GPU lock — see _needs_local_models.
+        self._gpu_locks: list[tuple[threading.Semaphore, Callable[[Graph, Registry], bool]]] = [
+            (threading.Semaphore(1), _needs_local_models)
+        ]
         if store is not None:
             store.interrupt_stale()
 
@@ -223,6 +247,21 @@ class RunManager:
             self._emit(record, CancelledEvent(run_id=record.state.run_id))
             self._settle(record)
             return
+        # Adaptive parallelism: hosted (network-bound) nodes render in parallel freely, but
+        # graphs that touch local models hold the single GPU lock — two local model loads at
+        # once double VRAM and OOM the box (one such OOM killed the whole server).
+        gpu_lock: threading.Semaphore | None = None
+        if self._gpu_locks:
+            held = [lock for lock, predicate in self._gpu_locks if predicate(graph, self._registry)]
+            gpu_lock = held[0] if held else None
+        if gpu_lock is not None:
+            gpu_lock.acquire()
+        try:
+            self._execute_locked(graph, target, record)
+        finally:
+            if gpu_lock is not None:
+                gpu_lock.release()
+    def _execute_locked(self, graph: Graph, target: str, record: RunRecord) -> None:
         self._emit(record, RunStartedEvent(run_id=record.state.run_id))
         self._notify("started", record)
         ctx = ExecutionContext(
