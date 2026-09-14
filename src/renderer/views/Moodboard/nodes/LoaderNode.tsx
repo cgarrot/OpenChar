@@ -190,8 +190,8 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
   return (
     <>
       <NodeBadgeRow dragNodeId={id}>
-        <NodeBadge icon={<ImageGlyph />} title="Load Assets">
-          Load Assets
+        <NodeBadge icon={<ImageGlyph />} title={item?.data?.name || 'Load Assets'}>
+          {item?.data?.name || 'Load Assets'}
         </NodeBadge>
       </NodeBadgeRow>
 
