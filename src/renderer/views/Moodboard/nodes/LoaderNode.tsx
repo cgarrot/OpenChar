@@ -113,8 +113,12 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
     void pickFilesViaInput().then(addLocalFiles)
   }
 
-  // A button (not a keyboard shortcut): the click IS the user gesture the clipboard API
-  // requires, so navigator.clipboard.read() always works — no keydown interception issues.
+  // Pre-request clipboard permission on mount: the Firefox prompt appears ONCE here,
+  // then every Paste button click reads silently (one click, no popup).
+  useEffect(() => {
+    navigator.clipboard?.read?.()?.catch?.(() => {})
+  }, [])
+
   const pasteFromClipboard = (): void => {
     void (async () => {
       try {
@@ -127,7 +131,6 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
           await addLocalFiles([file])
           return
         }
-        // fallback: URL d'image dans le presse-papier texte
         const text = await navigator.clipboard.readText()
         if (text.startsWith('http') && /\.(png|jpe?g|webp|gif)$/i.test(text.split('?')[0])) {
           const asset = await importMediaUrlToLibrary(text, text.split('/').pop() || 'image.png')
@@ -136,8 +139,8 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
             void addLoaderAssets(id, [asset.id])
           }
         }
-      } catch (err) {
-        console.warn('[LoaderNode] clipboard:', err)
+      } catch {
+        /* permission refusée ou clipboard vide */
       }
     })()
   }
