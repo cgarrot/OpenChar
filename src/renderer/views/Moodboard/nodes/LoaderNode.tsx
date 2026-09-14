@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { portKindColor } from '@shared/coreNodes'
 import type { FrameInput } from '@shared/types'
@@ -39,6 +39,38 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
   const item = useMoodboardStore((s) => s.items.find((it) => it.id === id))
   const assets = useAssetStore((s) => s.assets)
   const addLoaderAssets = useMoodboardStore((s) => s.addLoaderAssets)
+
+  // Ctrl+V sur ce node = ajouter l'image du presse-papier directement dedans.
+  // Le plus court chemin pour importer une ref visuelle depuis le web.
+  useEffect(() => {
+    if (!selected) return
+    const onKey = async (e: KeyboardEvent): Promise<void> => {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== 'v') return
+      const target = e.target as HTMLElement
+      if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') return
+      try {
+        const items = await navigator.clipboard.read()
+        const imageItem = items
+          .flatMap((ci) => ci.types.map((type) => ({ ci, type })))
+          .find(({ type }) => type.startsWith('image/'))
+        if (!imageItem) return
+        e.preventDefault()
+        const blob = await imageItem.ci.getType(imageItem.type)
+        const file = new File([blob], `pasted-${Date.now()}.png`, { type: imageItem.type })
+        const res = await fetch(
+          `/upload?fileName=${encodeURIComponent(file.name)}&kind=${file.type}`,
+          { method: 'POST', body: file },
+        )
+        if (!res.ok) return
+        const asset = (await res.json()) as { id?: string }
+        if (asset.id) void addLoaderAssets(id, [asset.id])
+      } catch {
+        /* clipboard indisponible */
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selected, id, addLoaderAssets])
   const removeLoaderAsset = useMoodboardStore((s) => s.removeLoaderAsset)
   const setLoaderHero = useMoodboardStore((s) => s.setLoaderHero)
   const onMediaContextMenu = useMediaContextMenu()
