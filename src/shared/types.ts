@@ -424,6 +424,8 @@ export interface MoodboardItem {
   frameId: string | null
   /** Containing layer item id, if this item lives inside a layer group. */
   parentId: string | null
+  /** Cross-project clipboard: the source project's folder path, used to copy asset files. */
+  sourceProjectPath?: string
   data: MoodboardItemData
   x: number
   y: number

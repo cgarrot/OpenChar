@@ -864,6 +864,48 @@ def create_app(
                 return JSONResponse({"ok": False, "error": str(error)})
 
         @app.post(
+            "/v1/assets/cross-copy",
+            tags=["Assets"],
+            summary="Copy assets from another project into the current one",
+        )
+        async def cross_copy_assets(request: Request) -> Response:
+            """Copy asset FILES from a source project folder into the currently open project.
+            Cross-project clipboard: the browser /media route only serves the ACTIVE project."""
+            import sqlite3 as _sq
+
+            body = await request.json()
+            asset_ids = body.get("assetIds", [])
+            source_path = body.get("sourceProjectPath", "")
+            if not isinstance(asset_ids, list) or not asset_ids or not source_path:
+                return JSONResponse({"ok": False, "error": "assetIds and sourceProjectPath required."})
+            from ..studio import assets as ax
+
+            source_folder = Path(source_path)
+            if not source_folder.is_dir():
+                return JSONResponse({"ok": False, "error": f"Source project not found: {source_path}"})
+            current_folder = studio_store.folder()
+            if current_folder is None:
+                return JSONResponse({"ok": False, "error": "No project is open."})
+            source_conn = _sq.connect(str(source_folder / "project.db"))
+            source_conn.row_factory = _sq.Row
+            remapped: dict[str, str] = {}
+            for asset_id in asset_ids:
+                row = source_conn.execute(
+                    "SELECT file_path FROM assets WHERE id = ?", (str(asset_id),)
+                ).fetchone()
+                if row is None:
+                    continue
+                src_file = source_folder / row["file_path"]
+                if not src_file.is_file():
+                    continue
+                asset = ax.import_file(studio_store.conn(), current_folder, str(src_file), None)
+                if asset is not None:
+                    remapped[str(asset_id)] = str(asset.get("id", ""))
+            source_conn.close()
+            events.broadcast("events:libraryChanged", None)
+            return JSONResponse({"ok": True, "value": remapped})
+
+        @app.post(
             "/upload",
             tags=["Assets"],
             summary="Upload to library",

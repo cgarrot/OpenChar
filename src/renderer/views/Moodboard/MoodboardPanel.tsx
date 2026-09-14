@@ -296,8 +296,13 @@ const FALLBACK_TEXT: TextItemData = {
 }
 
 /** The unified node canvas ("Inline Studio"): frames, layers, previews, and ideation items. */
-/** Cross-project clipboard: copy nodes in one project tab, paste in another. */
-const crossProjectClipboard: MoodboardItem[] = []
+/** Cross-project clipboard: copy nodes in one project tab, paste in another.
+ * `sourceProjectPath` lets the paste copy asset FILES from the source project. */
+interface ClipboardPayload {
+  items: MoodboardItem[]
+  sourceProjectPath: string | null
+}
+const crossProjectClipboard: ClipboardPayload = { items: [], sourceProjectPath: null }
 let pasteCount = 0
 
 export function MoodboardPanel(): React.JSX.Element {
@@ -619,17 +624,23 @@ function Board(): React.JSX.Element {
         )
         const picked = useMoodboardStore.getState().items.filter((it) => selectedIds.has(it.id))
         if (picked.length) {
-          crossProjectClipboard.length = 0
-          crossProjectClipboard.push(...picked)
+          crossProjectClipboard.items.length = 0
+          crossProjectClipboard.items.push(...picked)
+          const proj = useProjectStore.getState().current
+          crossProjectClipboard.sourceProjectPath = proj?.path ?? null
           pasteCount = 0
           e.preventDefault()
         }
       } else if (key === 'v') {
-        if (crossProjectClipboard.length > 0) {
+        if (crossProjectClipboard.items.length > 0) {
           e.preventDefault()
           pasteCount += 1
           const shift = 32 * pasteCount
-          void duplicateItems(crossProjectClipboard, { x: shift, y: shift })
+          const withSource = crossProjectClipboard.items.map((it) => ({
+            ...it,
+            sourceProjectPath: crossProjectClipboard.sourceProjectPath ?? undefined,
+          }))
+          void duplicateItems(withSource, { x: shift, y: shift })
           return
         }
         // No internal clipboard → try the SYSTEM clipboard for images (Ctrl+V from the web).
