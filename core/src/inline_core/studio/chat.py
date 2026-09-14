@@ -248,7 +248,8 @@ class ChatBridge:
         # switching project tabs changes it under its feet.
         active = self._store.project_ref()
         if active is not None:
-            contexts.append(f"[Projet actif : {active.name}]")
+            # The path matters: the per-project film memory lives at <path>/film-memory.yaml.
+            contexts.append(f"[Projet actif : {active.name} — {active.folder}]")
         # Persistent refs ride ONCE per session: re-sending a folder tree with every message
         # burns tokens for no gain. Re-injected when the list changes (new signature) — and
         # cleared after a fork, since the branch rewind may drop the earlier injection.
