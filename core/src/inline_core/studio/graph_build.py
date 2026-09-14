@@ -134,7 +134,18 @@ def _latest_output_freeze(
     outputs = core.get("outputs") or []
     if not outputs or item.get("type") != "core":
         return None
-    latest = outputs[0] if isinstance(outputs[0], dict) else None
+    # A pinned take is THE output: "un étage validé ne se re-rend jamais". Unpinned nodes
+    # feed their latest take.
+    pinned_id = core.get("pinnedTakeId")
+    latest = None
+    pinned = False
+    if pinned_id:
+        latest = next(
+            (o for o in outputs if isinstance(o, dict) and o.get("takeId") == pinned_id), None
+        )
+        pinned = latest is not None  # an explicit pin overrides staleness: THE take, as-is
+    if latest is None:
+        latest = outputs[0] if isinstance(outputs[0], dict) else None
     if not latest or latest.get("kind") != "image":
         return None
     file_path = folder / str(latest.get("filePath") or "")
@@ -151,6 +162,12 @@ def _latest_output_freeze(
         source = by_id.get(connector["fromItemId"]) or {}
         prompt = str((source.get("data") or {}).get("promptText") or "")
         break
+    if pinned:
+        return {
+            "id": item["id"],
+            "type": "input/image",
+            "params": {"asset": {"ref": "path", "path": str(file_path)}},
+        }
     if str(latest.get("prompt") or "") != prompt:
         return None
     recorded = latest.get("params") or {}
@@ -404,6 +421,7 @@ def build_workflow_graph(
         frozen = (
             None
             if node_id == target_item_id
+              and not (((item.get("data") or {}).get("core") or {}).get("pinnedTakeId"))
             else _latest_output_freeze(item, connectors, by_id, folder)
         )
         node = frozen or _item_to_node(
