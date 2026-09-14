@@ -350,6 +350,7 @@ export const IpcChannels = {
     addRef: 'chat:addRef',
     removeRef: 'chat:removeRef',
     uploadRef: 'chat:uploadRef',
+    setRefDeep: 'chat:setRefDeep',
   },
   events: {
     /** Main → renderer: the asset library changed (e.g. a video poster/transcode is ready). */
@@ -497,6 +498,8 @@ export interface ChatTab {
   lastActivity: number
   /** Persistent references (dirs/files) prepended as context to every prompt. */
   refs: string[]
+  /** Subset of refs whose WHOLE text content is injected ("read everything" mode). */
+  deepRefs: string[]
   /** Current thinking level ('' = model default). */
   thinking: string
   /** The Pi session file (.jsonl) — copyable for review/debugging. */
@@ -1051,6 +1054,8 @@ export interface InlineStudioApi {
     removeRef(tabId: string, path: string): Promise<Result<ChatTab>>
     /** A dropped file (no absolute path in the browser): stored server-side, real name kept. */
     uploadRef(tabId: string, name: string, data: string): Promise<Result<ChatTab>>
+    /** Toggle a repository ref's read-everything mode (full content injection). */
+    setRefDeep(tabId: string, path: string, deep: boolean): Promise<Result<ChatTab>>
   }
   /** Resolve the absolute path of a File dropped from the OS (Electron webUtils). Sync. */
   getPathForFile(file: File): string

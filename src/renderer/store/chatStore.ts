@@ -75,6 +75,7 @@ interface ChatState {
   loadStats: (tabId: string) => Promise<void>
   stats: ChatSessionStats | null
   addRef: (tabId: string, path: string) => Promise<void>
+  setRefDeep: (tabId: string, path: string, deep: boolean) => Promise<void>
   removeRef: (tabId: string, path: string) => Promise<void>
   send: () => Promise<void>
   cancel: () => Promise<void>
@@ -509,6 +510,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadStats: async (tabId) => {
     const res = await studio().chat.stats(tabId)
     if (res.ok) set({ stats: res.value })
+  },
+
+  setRefDeep: async (tabId, path, deep) => {
+    const res = await studio().chat.setRefDeep(tabId, path, deep)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    set({ tabs: get().tabs.map((tb) => (tb.id === tabId ? res.value : tb)) })
   },
 
   addRef: async (tabId, path) => {

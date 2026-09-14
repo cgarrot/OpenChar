@@ -102,6 +102,9 @@ class _Tab:
         self.session_file = session_file
         #: Persistent references (dirs/files) whose context is prepended to every prompt.
         self.refs: list[str] = list(refs or [])
+        #: Subset of refs flagged "deep": a repository's whole text content is injected,
+        #: not just its tree — the agent must not browse at its own discretion.
+        self.deep_refs: list[str] = []
         #: Signature of the refs context already delivered this session — refs are injected
         #: ONCE (re-injected only when the list changes or after a fork rewinds the branch).
         self.refs_sent: str = ""
@@ -120,7 +123,7 @@ class _Tab:
             "id": self.id, "title": self.title, "model": self.model, "cwd": self.cwd,
             "state": self.state, "lastError": self.last_error,
             "lastActivity": int(self.last_activity * 1000),
-            "refs": self.refs, "thinking": self.thinking,
+            "refs": self.refs, "deepRefs": self.deep_refs, "thinking": self.thinking,
             "sessionFile": self.session_file, "refsSent": self.refs_sent,
         }
 
@@ -164,6 +167,7 @@ class ChatBridge:
                            [str(r) for r in entry.get("refs", []) if r],
                            str(entry.get("thinking", "")))
                 tab.refs_sent = str(entry.get("refsSent", ""))
+                tab.deep_refs = [str(d) for d in entry.get("deepRefs", []) if d]
                 self._tabs[tab.id] = tab
         except (OSError, ValueError, KeyError):
             pass
@@ -171,8 +175,8 @@ class ChatBridge:
     def _save_tabs(self) -> None:
         payload = {"tabs": [
             {"id": t.id, "title": t.title, "model": t.model, "cwd": t.cwd,
-             "sessionFile": t.session_file, "refs": t.refs, "thinking": t.thinking,
-             "refsSent": t.refs_sent}
+             "sessionFile": t.session_file, "refs": t.refs, "deepRefs": t.deep_refs,
+             "thinking": t.thinking, "refsSent": t.refs_sent}
             for t in self._tabs.values()
         ]}
         self._tabs_file().write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -248,13 +252,13 @@ class ChatBridge:
         # Persistent refs ride ONCE per session: re-sending a folder tree with every message
         # burns tokens for no gain. Re-injected when the list changes (new signature) — and
         # cleared after a fork, since the branch rewind may drop the earlier injection.
-        signature = "\n".join(tab.refs)
+        signature = "\n".join(f"{ref}{'[deep]' if ref in tab.deep_refs else ''}" for ref in tab.refs)
         if signature != tab.refs_sent:
             if tab.refs:
                 contexts.append(
                     "[Contexte persistant — injecté une fois par session, il reste valable pour "
                     "toute la conversation]\n" + "\n\n".join(
-                        self._ref_context(ref) for ref in tab.refs
+                        self._ref_context(ref, deep=ref in tab.deep_refs) for ref in tab.refs
                     )
                 )
             tab.refs_sent = signature
@@ -544,6 +548,20 @@ class ChatBridge:
         """Reopen an archived session as a new tab (history preserved via switch_session)."""
         return await self.create_tab({"sessionFile": str(file), "title": title or None})
 
+    def set_ref_deep(self, tab_id: str, path: str, deep: bool) -> dict[str, Any]:
+        """Toggle a repository reference's 'read everything' mode — the next prompt re-injects
+        the full content (the signature change invalidates the once-per-session guard)."""
+        tab = self._tab(tab_id)
+        resolved = str(Path(path).expanduser())
+        if resolved not in tab.refs:
+            raise ChatError("Cette référence n'est pas dans la liste.")
+        if deep and resolved not in tab.deep_refs:
+            tab.deep_refs.append(resolved)
+        elif not deep:
+            tab.deep_refs = [d for d in tab.deep_refs if d != resolved]
+        self._save_tabs()
+        return tab.to_json()
+
     def add_ref(self, tab_id: str, path: str) -> dict[str, Any]:
         tab = self._tab(tab_id)
         path = str(path).strip()
@@ -791,15 +809,64 @@ class ChatBridge:
         if self._events is not None:
             self._events.broadcast("events:chat", {"tabId": tab.id, **payload})
 
-    def _ref_context(self, ref: str) -> str:
+    def _ref_context(self, ref: str, deep: bool = False) -> str:
         """One persistent reference: a directory becomes a bounded tree, a file a header line.
-        The agent reads the real content afterwards with its own tools."""
+        A "deep" reference injects the repository's whole text content instead — the agent
+        must not pick and choose what it reads."""
         path = Path(ref).expanduser()
         if path.is_dir():
+            if deep:
+                return self._deep_repo_context(path)
             return self._folder_context(str(path))
         if path.is_file():
             return f"[Référence fichier: {path} ({path.stat().st_size // 1024} KB)]"
         return f"[Référence introuvable: {ref}]"
+
+    #: Text extensions whose content is injected in deep mode; anything else is skipped.
+    _DEEP_TEXT_EXTS = {
+        ".md", ".txt", ".rst", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json",
+        ".yaml", ".yml", ".toml", ".ini", ".cfg", ".csv", ".tsv", ".html", ".css", ".scss",
+        ".sh", ".bash", ".zsh", ".sql", ".graphql", ".env", ".gitignore", ".dockerfile",
+    }
+    _DEEP_SKIP_DIRS = {"node_modules", ".git", "venv", ".venv", "__pycache__", "dist",
+                       "build", "out", "target", ".mypy_cache", ".pytest_cache", "site"}
+
+    def _deep_repo_context(self, root: Path, budget_kb: int | None = None) -> str:
+        """A repository flagged 'deep': every text file's content rides in the context —
+        the agent gets the WHOLE repo, not a tree to browse at its discretion. Bounded by a
+        total budget (files are added in tree order; the remainder is named, not read)."""
+        budget = (budget_kb or int(os.environ.get("INLINE_CHAT_DEEP_BUDGET_KB", "150"))) * 1024
+        chunks: list[str] = [f"[DÉPÔT COMPLET : {root} — contenu intégral injecté]"]
+        used = 0
+        skipped: list[str] = []
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(root)
+            if any(part in self._DEEP_SKIP_DIRS or part.startswith(".") for part in rel.parts):
+                continue
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in self._DEEP_TEXT_EXTS and path.name.lower() not in {
+                "dockerfile", "makefile", "procfile",
+            }:
+                continue
+            try:
+                size = path.stat().st_size
+                if size > 512 * 1024:
+                    skipped.append(f"{rel} (trop gros : {size // 1024} Ko)")
+                    continue
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if used + len(content) > budget:
+                skipped.append(f"{rel} (+ le reste — budget {budget // 1024} Ko atteint)")
+                break
+            chunks.append(f"==== {rel} ====\n{content}")
+            used += len(content)
+        if skipped:
+            chunks.append(
+                "[Non injecté — lis-les avec tes outils si besoin :\n  " + "\n  ".join(skipped[:30]) + "]"
+            )
+        return "\n\n".join(chunks)
 
     def _folder_context(self, folder: str, max_entries: int = 300, max_depth: int = 3) -> str:
         """A bounded tree listing, so the agent knows what a referenced folder holds. It explores
@@ -918,3 +985,4 @@ def register_chat_handlers(rpc: Any, chat: ChatBridge) -> None:
     reg("chat:addRef", lambda tab_id, path: chat.add_ref(tab_id, path))
     reg("chat:removeRef", lambda tab_id, path: chat.remove_ref(tab_id, path))
     reg("chat:uploadRef", lambda tab_id, name, data: chat.upload_ref(tab_id, name, data))
+    reg("chat:setRefDeep", lambda tab_id, path, deep: chat.set_ref_deep(tab_id, path, deep))

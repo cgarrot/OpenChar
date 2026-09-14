@@ -309,6 +309,7 @@ function RefsBar(): React.JSX.Element {
   const tab = useChatStore((s) => s.tabs.find((t) => t.id === s.activeId))
   const addRef = useChatStore((s) => s.addRef)
   const removeRef = useChatStore((s) => s.removeRef)
+  const setRefDeep = useChatStore((s) => s.setRefDeep)
   const newTabFromContext = useChatStore((s) => s.newTabFromContext)
   const addFiles = useChatStore((s) => s.addFiles)
   const refFileRef = useRef<HTMLInputElement>(null)
@@ -318,23 +319,42 @@ function RefsBar(): React.JSX.Element {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-panel/50 px-2 py-1.5">
       <SelectionStrip />
-      {tab?.refs.map((ref) => (
-        <span
-          key={ref}
-          title={ref}
-          className="flex max-w-52 items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] text-zinc-300"
-        >
-          {ref.endsWith('/') || !ref.includes('.') ? '📁' : '📄'}
-          <span className="truncate">{ref.split('/').filter(Boolean).pop()}</span>
-          <button
-            onClick={() => activeId && void removeRef(activeId, ref)}
-            className="text-zinc-600 hover:text-red-400"
-            title="Retirer la référence"
+      {tab?.refs.map((ref) => {
+        const isDir = ref.endsWith('/') || !ref.includes('.')
+        const deep = tab?.deepRefs?.includes(ref) ?? false
+        return (
+          <span
+            key={ref}
+            title={ref}
+            className={`flex max-w-52 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${
+              deep ? 'bg-sky-500/15 text-sky-300' : 'bg-surface text-zinc-300'
+            }`}
           >
-            ✕
-          </button>
-        </span>
-      ))}
+            {isDir ? '📁' : '📄'}
+            <span className="truncate">{ref.split('/').filter(Boolean).pop()}</span>
+            {isDir && (
+              <button
+                onClick={() => activeId && void setRefDeep(activeId, ref, !deep)}
+                className={deep ? 'text-sky-400' : 'text-zinc-600 hover:text-sky-400'}
+                title={
+                  deep
+                    ? 'Mode « tout lire » ACTIF : le contenu intégral du dépôt est injecté dans le contexte'
+                    : 'Activer « tout lire » : tout le contenu texte du dépôt sera injecté (pas seulement l’arborescence)'
+                }
+              >
+                ≡
+              </button>
+            )}
+            <button
+              onClick={() => activeId && void removeRef(activeId, ref)}
+              className="text-zinc-600 hover:text-red-400"
+              title="Retirer la référence"
+            >
+              ✕
+            </button>
+          </span>
+        )
+      })}
       <div className="relative">
         <button
           onClick={() => setAddOpen(!addOpen)}
