@@ -114,39 +114,58 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
     void pickFilesViaInput().then(addLocalFiles)
   }
 
-  // Pre-request clipboard permission on mount: the Firefox prompt appears ONCE here,
-  // then every Paste button click reads silently (one click, no popup).
-  useEffect(() => {
-    navigator.clipboard?.read?.()?.catch?.(() => {})
-  }, [])
-
+  // execCommand('paste') from a click = NO permission popup (unlike navigator.clipboard.read
+  // which prompts every time in Firefox). The paste event carries clipboardData for free.
   const pasteFromClipboard = (): void => {
-    void (async () => {
-      try {
-        const items = await navigator.clipboard.read()
-        for (const ci of items) {
-          const type = ci.types.find((t) => t.startsWith('image/'))
-          if (!type) continue
-          const blob = await ci.getType(type)
-          const ext = type.split('/')[1]?.split(';')[0] || 'png'
-          const file = new File([blob], `pasted-${Date.now()}.${ext}`, { type })
-          // addLocalFiles = le MÊME chemin que "Select from Local": /upload avec les
-          // bons params → assets table → persistent après refresh.
-          await addLocalFiles([file])
-          return
-        }
-        const text = await navigator.clipboard.readText()
+    const input = document.createElement('textarea')
+    input.style.cssText = 'position:fixed;top:-100px;left:-100px;opacity:0'
+    document.body.appendChild(input)
+    input.focus()
+
+    let handled = false
+    input.addEventListener('paste', (e) => {
+      e.preventDefault()
+      handled = true
+      const files = Array.from(e.clipboardData?.files || [])
+      const images = files.filter((f) => f.type.startsWith('image/'))
+      if (images.length > 0) {
+        void addLocalFiles(images)
+      } else {
+        // fallback: URL texte
+        const text = e.clipboardData?.getData('text') || ''
         if (text.startsWith('http') && /\.(png|jpe?g|webp|gif)$/i.test(text.split('?')[0])) {
-          const asset = await importMediaUrlToLibrary(text, text.split('/').pop() || 'image.png')
-          if (asset) {
-            await useAssetStore.getState().load()
-            void addLoaderAssets(id, [asset.id])
-          }
+          void importMediaUrlToLibrary(text, text.split('/').pop() || 'image.png').then((asset) => {
+            if (asset) {
+              void useAssetStore.getState().load()
+              void addLoaderAssets(id, [asset.id])
+            }
+          })
         }
-      } catch {
-        /* permission refusée ou clipboard vide */
       }
-    })()
+      input.remove()
+    })
+
+    // execCommand from a user gesture (this click) = no permission needed
+    const ok = document.execCommand('paste')
+    if (!ok || !handled) {
+      input.remove()
+      // Last resort: the async API (may prompt in Firefox, but better than nothing)
+      void (async () => {
+        try {
+          const items = await navigator.clipboard.read()
+          for (const ci of items) {
+            const type = ci.types.find((t) => t.startsWith('image/'))
+            if (!type) continue
+            const blob = await ci.getType(type)
+            const file = new File([blob], `pasted-${Date.now()}.png`, { type })
+            await addLocalFiles([file])
+            return
+          }
+        } catch {
+          /* clipboard indisponible */
+        }
+      })()
+    }
   }
 
   const isFileDrag = (e: React.DragEvent): boolean => e.dataTransfer.types.includes('Files')
