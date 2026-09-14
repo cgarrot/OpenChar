@@ -69,6 +69,9 @@ Ground rules:
   will need for wiring. nanogpt models: nanogpt_model_docs gives the exact per-model parameters
   before you configure a node.
 - Be concise, answer in the user's language.
+- PROJECTS: the "[Projet actif : …]" line in each message names the project your graph tools
+  operate on. If it changed since your last action, the board you knew is NOT the one you see
+  now — re-list before mutating anything.
 - Naming: right after your first substantive answer, give the tab a short LOGICAL name (2-4 plain
   words describing the conversation topic, e.g. "Génération phare tempête" or "Pipeline vidéo
   H3") by calling chat_set_title once. Never catchy or generic ("Discussion", "Assistant");
@@ -236,6 +239,12 @@ class ChatBridge:
                 payload_images.append(resolved)
         text = str(message)
         contexts: list[str] = []
+        # The ACTIVE project rides with every message: graph tools operate on whatever project
+        # the server has open, and the agent must never guess which board it is mutating —
+        # switching project tabs changes it under its feet.
+        active = self._store.project_ref()
+        if active is not None:
+            contexts.append(f"[Projet actif : {active.name}]")
         # Persistent refs ride ONCE per session: re-sending a folder tree with every message
         # burns tokens for no gain. Re-injected when the list changes (new signature) — and
         # cleared after a fork, since the branch rewind may drop the earlier injection.
