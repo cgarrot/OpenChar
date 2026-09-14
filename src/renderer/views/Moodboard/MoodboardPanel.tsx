@@ -296,6 +296,10 @@ const FALLBACK_TEXT: TextItemData = {
 }
 
 /** The unified node canvas ("Inline Studio"): frames, layers, previews, and ideation items. */
+/** Cross-project clipboard: copy nodes in one project tab, paste in another. */
+const crossProjectClipboard: MoodboardItem[] = []
+let pasteCount = 0
+
 export function MoodboardPanel(): React.JSX.Element {
   return (
     <ReactFlowProvider>
@@ -359,9 +363,8 @@ function Board(): React.JSX.Element {
   const updateNodeInternals = useUpdateNodeInternals()
   const [nodes, setNodes] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
-  // In-memory clipboard for copy/paste; pasteCount cascades repeated pastes.
-  const clipboard = useRef<MoodboardItem[]>([])
-  const pasteCount = useRef(0)
+
+  pasteCount = 0
   // "Connect to…" menu shown when an output link is dropped on empty canvas.
   const [connectMenu, setConnectMenu] = useState<{
     fromItemId: string
@@ -616,16 +619,17 @@ function Board(): React.JSX.Element {
         )
         const picked = useMoodboardStore.getState().items.filter((it) => selectedIds.has(it.id))
         if (picked.length) {
-          clipboard.current = picked
-          pasteCount.current = 0
+          crossProjectClipboard.length = 0
+          crossProjectClipboard.push(...picked)
+          pasteCount = 0
           e.preventDefault()
         }
       } else if (key === 'v') {
-        if (clipboard.current.length > 0) {
+        if (crossProjectClipboard.length > 0) {
           e.preventDefault()
-          pasteCount.current += 1
-          const shift = 32 * pasteCount.current
-          void duplicateItems(clipboard.current, { x: shift, y: shift })
+          pasteCount += 1
+          const shift = 32 * pasteCount
+          void duplicateItems(crossProjectClipboard, { x: shift, y: shift })
           return
         }
         // No internal clipboard → try the SYSTEM clipboard for images (Ctrl+V from the web).
