@@ -250,7 +250,41 @@ async function copyOne(
   } else if (item.type === 'prompt') {
     patch.data = { ...res.value.data, promptText: data.promptText ?? '' }
   } else if (item.type === 'loader') {
-    patch.data = { ...res.value.data, assetIds: data.assetIds ?? [] }
+    // Cross-project paste: the source project's asset ids don't exist here. Copy each
+    // asset's FILE into this project's library, then remap the ids.
+    let assetIds = (data.assetIds ?? []) as string[]
+    if (assetIds.length > 0) {
+      const currentAssets = await studio().assets.list()
+      const knownIds = new Set(currentAssets.ok ? currentAssets.value.map((a) => a.id) : [])
+      const remapped: string[] = []
+      for (const assetId of assetIds) {
+        if (knownIds.has(assetId)) {
+          remapped.push(assetId)
+          continue
+        }
+        // Not in this project -> fetch the file and re-upload it here
+        try {
+          const assetRes = await fetch(resolveMedia(`assets/${assetId}`))
+          if (assetRes.ok) {
+            const blob = await assetRes.blob()
+            const old = currentAssets.ok ? currentAssets.value.find((a) => a.id === assetId) : null
+            const name = old?.name || `${assetId.slice(0, 8)}.png`
+            const up = await fetch(`/upload?name=${encodeURIComponent(name)}`, {
+              method: 'POST',
+              body: blob,
+            })
+            if (up.ok) {
+              const added = (await up.json()) as { ok: boolean; value?: { id: string } }
+              if (added.ok && added.value?.id) remapped.push(added.value.id)
+            }
+          }
+        } catch {
+          /* asset introuvable */
+        }
+      }
+      assetIds = remapped
+    }
+    patch.data = { ...res.value.data, assetIds }
   } else if (item.type === 'train/lora') {
     // Settings only, never `runId`: the copy is a fresh slot, the same rule a core node's takes
     // follow. Claiming the original's run would give two nodes one log and one Resume.
