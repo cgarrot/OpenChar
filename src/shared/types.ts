@@ -319,6 +319,9 @@ export interface MoodboardItemData {
     /** Recent renders (newest first); `output` points at the active one. Drives the take-history
      * strip on generation nodes. */
     outputs?: CoreTakeRef[]
+    /** The take pinned as the node's official output: downstream consumes it and the node
+     * never re-renders (validation gate). Null/absent = latest take. */
+    pinnedTakeId?: string | null
     /** The last submitted run, which has no take yet. Drives the strip's Current slot. */
     pending?: CorePendingRun
   }

@@ -773,14 +773,34 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                   </button>
                 )
               }
+              const pinned = core.pinnedTakeId === take.takeId
               return (
                 <button
                   key={entry.id}
                   onClick={() => selectTake(take)}
-                  title={active ? 'Shown' : 'Use this take'}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    void updateItem(itemId, {
+                      data: {
+                        ...item.data,
+                        core: { ...core, pinnedTakeId: pinned ? null : take.takeId },
+                      },
+                    })
+                  }}
+                  title={
+                    pinned
+                      ? '📌 Épinglé (take officiel, la node ne se re-rend jamais) — clic-droit pour désépingler'
+                      : (active ? 'Shown' : 'Use this take') +
+                        ' — clic-droit pour épingler (validation)'
+                  }
                   className={`nodrag relative h-11 w-11 shrink-0 overflow-hidden rounded border transition-colors ${ring}`}
                 >
                   <CoreOutputThumb filePath={take.filePath} kind={take.kind} />
+                  {pinned && (
+                    <span className="absolute left-0 top-0 bg-sky-500/90 px-0.5 text-[8px] leading-tight text-white">
+                      📌
+                    </span>
+                  )}
                   {/* Only when a character was applied and a score was actually measured: an
                       unmeasurable take must not read as a zero-scoring one. */}
                   {take.continuityScore !== undefined && (
