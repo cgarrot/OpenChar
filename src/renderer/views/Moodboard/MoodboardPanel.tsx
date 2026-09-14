@@ -638,6 +638,47 @@ function Board(): React.JSX.Element {
     return screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
   }
 
+  // Clipboard paste → image asset: Ctrl+V anywhere on the canvas imports the image from
+  // the clipboard as a library asset + loader node at the viewport centre. The fastest
+  // way to bring a web reference into the graph.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent): void => {
+      // Don't hijack paste into text fields (chat composer, prompts, etc.)
+      const target = e.target as HTMLElement
+      if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable)
+        return
+      const items = Array.from(e.clipboardData?.items || [])
+      const imageItems = items.filter((item) => item.type.startsWith('image/'))
+      if (imageItems.length === 0) return
+      e.preventDefault()
+      const files = imageItems
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file !== null)
+      if (files.length === 0) return
+      const { x, y } = centre()
+      void (async () => {
+        for (const file of files) {
+          const res = await fetch(
+            `/upload?fileName=${encodeURIComponent(file.name || 'pasted.png')}&kind=${file.type}`,
+            {
+              method: 'POST',
+              body: file,
+            },
+          )
+          if (!res.ok) continue
+          const asset = (await res.json()) as { id?: string }
+          if (!asset.id) continue
+          await loadAssets()
+          const loader = await addLoader(x + Math.random() * 60, y + Math.random() * 60)
+          if (loader) await addLoaderAssets(loader.id, [asset.id])
+        }
+      })()
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- centre is a viewport lookup, stable enough
+  }, [loadAssets, addLoader, addLoaderAssets])
+
   const { importWorkflow } = useWorkflowImport({ setNodes, fitBounds, centre })
   useWorkflowsAutoOpen()
 
