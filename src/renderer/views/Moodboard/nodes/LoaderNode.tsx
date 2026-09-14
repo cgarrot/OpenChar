@@ -39,6 +39,7 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
   const item = useMoodboardStore((s) => s.items.find((it) => it.id === id))
   const assets = useAssetStore((s) => s.assets)
   const addLoaderAssets = useMoodboardStore((s) => s.addLoaderAssets)
+  const updateItem = useMoodboardStore((s) => s.updateItem)
 
   // Ctrl+V sur ce node = ajouter l'image du presse-papier directement dedans.
   // Le plus court chemin pour importer une ref visuelle depuis le web.
@@ -127,7 +128,10 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
           const type = ci.types.find((t) => t.startsWith('image/'))
           if (!type) continue
           const blob = await ci.getType(type)
-          const file = new File([blob], `pasted-${Date.now()}.png`, { type })
+          const ext = type.split('/')[1]?.split(';')[0] || 'png'
+          const file = new File([blob], `pasted-${Date.now()}.${ext}`, { type })
+          // addLocalFiles = le MÊME chemin que "Select from Local": /upload avec les
+          // bons params → assets table → persistent après refresh.
           await addLocalFiles([file])
           return
         }
@@ -188,11 +192,29 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
   const mediaKind: 'image' | 'video' = cur?.kind === 'video' ? 'video' : 'image'
 
   return (
-    <>
+    <div className="group">
       <NodeBadgeRow dragNodeId={id}>
-        <NodeBadge icon={<ImageGlyph />} title={item?.data?.name || 'Load Assets'}>
+        <NodeBadge
+          icon={<ImageGlyph />}
+          title={item?.data?.name || 'Load Assets — double-clic pour renommer'}
+        >
           {item?.data?.name || 'Load Assets'}
         </NodeBadge>
+        <button
+          onClick={() => {
+            const current = item?.data?.name || ''
+            const name = window.prompt('Nom de cette référence :', current)
+            if (name !== null) {
+              void updateItem(id, {
+                data: { ...(item?.data || {}), name: name.trim() || undefined },
+              })
+            }
+          }}
+          className="nodrag ml-0.5 rounded px-1 text-[9px] text-zinc-500 opacity-0 transition-opacity hover:text-white group-hover:opacity-100"
+          title="Renommer (double-clic sur le titre)"
+        >
+          ✎
+        </button>
       </NodeBadgeRow>
 
       <NodeFrame
@@ -323,7 +345,7 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
           Output
         </span>
       </Handle>
-    </>
+    </div>
   )
 }
 
