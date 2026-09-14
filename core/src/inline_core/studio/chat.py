@@ -610,8 +610,16 @@ class ChatBridge:
         return tab.to_json()
 
     async def history(self, tab_id: str) -> dict[str, Any]:
-        """Pi's own messages, normalized for first render after a reload."""
+        """Pi's own messages, normalized for first render after a reload.
+
+        Fast path: when the process is dead (stopped after a server restart), read the
+        session file directly instead of respawning pi + switch_session (which can take
+        20-45s with extension-heavy setups and times out the caller)."""
         tab = self._tab(tab_id)
+        if tab.process is None or tab.process.returncode is not None:
+            messages = self._read_session_file(tab)
+            if messages is not None:
+                return {"id": tab_id, "messages": messages}
         await self._ensure_process(tab)
         state = await self._command(tab, {"type": "get_state"})
         session_file = ((state or {}).get("sessionFile")) or ""
@@ -621,6 +629,33 @@ class ChatBridge:
         messages = await self._command(tab, {"type": "get_messages"})
         return {"id": tab_id, "messages": _normalize_messages(
             (messages or {}).get("messages", []))}
+
+    def _read_session_file(self, tab: _Tab) -> list[dict[str, Any]] | None:
+        """Parse the session JSONL directly — instant history for dead tabs."""
+        if not tab.session_file:
+            return None
+        path = Path(tab.session_file)
+        if not path.is_file():
+            return None
+        messages: list[dict[str, Any]] = []
+        try:
+            for line in path.open(encoding="utf-8", errors="replace"):
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("type") != "message":
+                    continue
+                message = entry.get("message") or {}
+                role = message.get("role", "")
+                if role not in ("user", "assistant"):
+                    continue
+                normalized = _normalize_message(message)
+                normalized["entryId"] = str(entry.get("id", ""))
+                messages.append(normalized)
+        except OSError:
+            return None
+        return messages
 
     # --- process management --------------------------------------------------------------------
 

@@ -208,6 +208,59 @@ function UserBubbleMenu({
   )
 }
 
+/** Discreet actions on assistant messages: copy / copy as code block. */
+function AssistantBubbleMenu({ text }: { text: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="relative" data-bubble-menu>
+      <button
+        onClick={() => setOpen(!open)}
+        className={`rounded px-1 text-xs transition-opacity ${
+          open ? 'text-zinc-300 opacity-100' : 'text-zinc-600 opacity-40 hover:opacity-100'
+        }`}
+        title="Actions de la réponse"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-52 rounded border border-border bg-surface p-1 shadow-xl">
+          <button
+            onClick={() => {
+              setOpen(false)
+              void navigator.clipboard.writeText(text).then(() => {
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              })
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+            title="Copier le texte rendu"
+          >
+            <span className="w-4 text-center">⧉</span>
+            {copied ? 'Copié ✓' : 'Copier la réponse'}
+          </button>
+          <button
+            onClick={() => {
+              setOpen(false)
+              void navigator.clipboard
+                .writeText('\u0060\u0060\u0060\n' + text + '\n\u0060\u0060\u0060')
+                .then(() => {
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 1500)
+                })
+            }}
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+            title="Copier enveloppé dans un bloc de code markdown"
+          >
+            <span className="w-4 text-center">📋</span>
+            {copied ? 'Copié ✓' : 'Copier en bloc code'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function EntryView({
   entry,
   onEdit,
@@ -258,11 +311,14 @@ function EntryView({
     )
   }
   return (
-    <div className="max-w-[95%] rounded-lg border border-border/60 bg-panel px-3 py-2 text-sm text-zinc-200">
+    <div className="group/ai relative max-w-[95%] rounded-lg border border-border/60 bg-panel px-3 py-2 text-sm text-zinc-200">
       <div className="chat-md">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.text || '…'}</ReactMarkdown>
       </div>
       {entry.streaming && <span className="ml-0.5 animate-pulse">▍</span>}
+      <div className="absolute -right-7 top-1.5 z-10 opacity-0 transition-opacity group-hover/ai:opacity-100">
+        <AssistantBubbleMenu text={entry.text} />
+      </div>
     </div>
   )
 }
@@ -1037,6 +1093,14 @@ export function ChatDock({
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData.files || [])
+            const images = files.filter((f) => f.type.startsWith('image/'))
+            if (images.length > 0) {
+              e.preventDefault()
+              void addFiles(images)
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
