@@ -113,6 +113,35 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
     void pickFilesViaInput().then(addLocalFiles)
   }
 
+  // A button (not a keyboard shortcut): the click IS the user gesture the clipboard API
+  // requires, so navigator.clipboard.read() always works — no keydown interception issues.
+  const pasteFromClipboard = (): void => {
+    void (async () => {
+      try {
+        const items = await navigator.clipboard.read()
+        for (const ci of items) {
+          const type = ci.types.find((t) => t.startsWith('image/'))
+          if (!type) continue
+          const blob = await ci.getType(type)
+          const file = new File([blob], `pasted-${Date.now()}.png`, { type })
+          await addLocalFiles([file])
+          return
+        }
+        // fallback: URL d'image dans le presse-papier texte
+        const text = await navigator.clipboard.readText()
+        if (text.startsWith('http') && /\.(png|jpe?g|webp|gif)$/i.test(text.split('?')[0])) {
+          const asset = await importMediaUrlToLibrary(text, text.split('/').pop() || 'image.png')
+          if (asset) {
+            await useAssetStore.getState().load()
+            void addLoaderAssets(id, [asset.id])
+          }
+        }
+      } catch (err) {
+        console.warn('[LoaderNode] clipboard:', err)
+      }
+    })()
+  }
+
   const isFileDrag = (e: React.DragEvent): boolean => e.dataTransfer.types.includes('Files')
   const canDrop = (e: React.DragEvent): boolean =>
     e.dataTransfer.types.includes(ASSET_DND_TYPE) ||
@@ -208,6 +237,13 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
                   <UploadIcon className="h-3.5 w-3.5" />
                   Select from Local
                 </button>
+                <button
+                  onClick={pasteFromClipboard}
+                  title="Paste an image from your clipboard (copy from the web, then click)"
+                  className="nodrag flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] text-zinc-200 hover:border-zinc-500 hover:text-white"
+                >
+                  📋 Paste
+                </button>
               </div>
             )}
 
@@ -252,6 +288,13 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
               >
                 <UploadIcon className="h-3 w-3" />
                 Select from Local
+              </button>
+              <button
+                onClick={pasteFromClipboard}
+                title="Paste from clipboard"
+                className="nodrag ml-1 flex items-center rounded px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-black/40 hover:text-white"
+              >
+                📋
               </button>
             </div>
           )}
