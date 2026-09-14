@@ -30,6 +30,7 @@ function ProjectTabs(): React.JSX.Element {
   const openFromDialog = useProjectStore((s) => s.openFromDialog)
   const createProject = useProjectStore((s) => s.createProject)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
   return (
     <div className="flex min-w-0 items-center gap-1">
       <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
@@ -54,6 +55,18 @@ function ProjectTabs(): React.JSX.Element {
           </div>
         ))}
       </div>
+      <button
+        onClick={() => {
+          const t = tabs.find((x) => x.id === activeTabId)
+          if (t) void navigator.clipboard.writeText(t.path)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1500)
+        }}
+        className="shrink-0 rounded px-1 py-0.5 text-xs text-zinc-500 hover:bg-panel hover:text-white"
+        title="Copier l'ID/chemin du projet (board) — pour review/debug"
+      >
+        {copied ? '✓' : '⧉'}
+      </button>
       <div className="relative shrink-0">
         <button
           onClick={() => {

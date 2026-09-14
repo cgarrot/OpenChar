@@ -117,6 +117,55 @@ def _edges_for(
     return inputs
 
 
+def _latest_output_freeze(
+    item: dict[str, Any],
+    connectors: list[dict[str, Any]],
+    by_id: dict[str, dict[str, Any]],
+    folder: Path,
+) -> dict[str, Any] | None:
+    """A core node that already produced a take with unchanged prompt/params becomes a frozen
+    image source, so running a DOWNSTREAM node never re-renders (and re-bills) its upstream
+    chain — the #1 duplicate-generation hole (a node with seed=-1 is cache-ineligible, so the
+    engine cache never engaged; one board showed 14 takes on a single study node).
+
+    The run TARGET itself is never frozen: re-running a node means "give me a new variation".
+    """
+    core = ((item.get("data") or {}).get("core") or {})
+    outputs = core.get("outputs") or []
+    if not outputs or item.get("type") != "core":
+        return None
+    latest = outputs[0] if isinstance(outputs[0], dict) else None
+    if not latest or latest.get("kind") != "image":
+        return None
+    file_path = folder / str(latest.get("filePath") or "")
+    if not file_path.is_file():
+        return None
+    # Inputs unchanged? The recorded prompt must equal the currently wired one, and every
+    # param the item actually sets must match the recorded render params (defaults omitted).
+    prompt = ""
+    for connector in connectors:
+        if connector["toItemId"] != item["id"]:
+            continue
+        if (connector.get("data") or {}).get("targetHandle") != "prompt":
+            continue
+        source = by_id.get(connector["fromItemId"]) or {}
+        prompt = str((source.get("data") or {}).get("promptText") or "")
+        break
+    if str(latest.get("prompt") or "") != prompt:
+        return None
+    recorded = latest.get("params") or {}
+    for key, value in (core.get("params") or {}).items():
+        if key.startswith("_"):
+            continue
+        if recorded.get(key) != value:
+            return None
+    return {
+        "id": item["id"],
+        "type": "input/image",
+        "params": {"asset": {"ref": "path", "path": str(file_path)}},
+    }
+
+
 def _item_to_node(
     item: dict[str, Any],
     connectors: list[dict[str, Any]],
@@ -349,7 +398,15 @@ def build_workflow_graph(
         item = by_id.get(node_id)
         if item is None:
             continue
-        node = _item_to_node(
+        # An already-rendered upstream node whose inputs are unchanged feeds its existing take
+        # as a frozen image source — running downstream must never re-bill the chain. The run
+        # target itself is never frozen: re-running a node means "give me a new variation".
+        frozen = (
+            None
+            if node_id == target_item_id
+            else _latest_output_freeze(item, connectors, by_id, folder)
+        )
+        node = frozen or _item_to_node(
             item, connectors, by_id, resolve_asset_path, resolve_frame_path, listed, fanned_out
         )
         if node is not None:
