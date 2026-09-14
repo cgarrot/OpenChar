@@ -17,7 +17,104 @@ import { ControlSpaceEditorMount } from '../ControlSpace/ControlSpaceEditorMount
 import { ActivityIndicator } from '../Activity/ActivityIndicator'
 import { ChatDock } from '../Chat/ChatPanel'
 
-/** The main shell: the node canvas plus the Settings drawer. */
+/** Open-project tabs: several projects at once, instant switch (server reopens the SQLite
+ * db, ~instant); runs keep landing in their own project — the ref is pinned at submit. */
+function ProjectTabs(): React.JSX.Element {
+  const tabs = useProjectStore((s) => s.tabs)
+  const activeTabId = useProjectStore((s) => s.activeTabId)
+  const switchTab = useProjectStore((s) => s.switchTab)
+  const closeTab = useProjectStore((s) => s.closeTab)
+  const recents = useProjectStore((s) => s.recents)
+  const openByPath = useProjectStore((s) => s.openByPath)
+  const loadRecents = useProjectStore((s) => s.loadRecents)
+  const openFromDialog = useProjectStore((s) => s.openFromDialog)
+  const [menuOpen, setMenuOpen] = useState(false)
+  if (tabs.length <= 1 && !menuOpen) {
+    // Un seul projet : pas de bruit — juste le « + » discret pour en ouvrir un autre.
+    return (
+      <button
+        onClick={() => {
+          void loadRecents()
+          setMenuOpen(true)
+        }}
+        className="rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-panel hover:text-white"
+        title="Ouvrir un autre projet en onglet"
+      >
+        +
+      </button>
+    )
+  }
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+        {tabs.map((t) => (
+          <div
+            key={t.id}
+            className={`group/tab flex shrink-0 items-center gap-1 rounded px-2 py-0.5 text-xs ${
+              t.id === activeTabId ? 'bg-panel text-white' : 'text-zinc-400 hover:bg-panel'
+            }`}
+            title={t.path}
+          >
+            <button onClick={() => void switchTab(t.id)} className="max-w-40 truncate">
+              {t.name}
+            </button>
+            <button
+              onClick={() => closeTab(t.id)}
+              className="text-zinc-600 opacity-0 transition-opacity hover:text-red-400 group-hover/tab:opacity-100"
+              title="Fermer cet onglet"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="relative shrink-0">
+        <button
+          onClick={() => {
+            if (!menuOpen) void loadRecents()
+            setMenuOpen(!menuOpen)
+          }}
+          className="rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-panel hover:text-white"
+          title="Ouvrir un autre projet"
+        >
+          +
+        </button>
+        {menuOpen && (
+          <div className="absolute left-0 top-full z-40 mt-1 max-h-80 w-72 overflow-y-auto rounded border border-border bg-surface p-1 shadow-xl">
+            {recents
+              .filter((r) => !tabs.some((t) => t.path === r.path))
+              .slice(0, 8)
+              .map((r) => (
+                <button
+                  key={r.path}
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void openByPath(r.path)
+                  }}
+                  className="block w-full truncate rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-panel"
+                  title={r.path}
+                >
+                  {r.name}
+                </button>
+              ))}
+            <button
+              onClick={() => {
+                setMenuOpen(false)
+                void openFromDialog()
+              }}
+              className="mt-1 block w-full border-t border-border/60 px-2 pt-1.5 text-left text-xs text-zinc-500 hover:text-zinc-300"
+            >
+              Parcourir…
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** The main shell: the node canvas plus the Settings drawer. `project` (and the caller's
+ * key on it) makes every tab switch remount, so all stores reload for the new project. */
 export function Workspace({ project }: { project: Project }): React.JSX.Element {
   const settingsOpen = useUiStore((s) => s.settingsOpen)
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
@@ -48,7 +145,7 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" data-project={project.id}>
       <header className="relative flex h-12 shrink-0 items-center justify-between border-b border-border bg-surface px-3">
         <div className="flex items-center gap-2.5">
           <button
@@ -60,7 +157,7 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
             <span className="text-sm font-semibold text-white">OpenChar</span>
           </button>
           <span className="text-zinc-600">/</span>
-          <span className="text-sm text-zinc-300">{project.name}</span>
+          <ProjectTabs />
         </div>
 
         <div className="flex items-center gap-1">

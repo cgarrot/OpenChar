@@ -52,7 +52,7 @@ export function App(): React.JSX.Element {
   return (
     <>
       <UpdateBanner />
-      {current ? <Workspace project={current} /> : <ProjectLauncher />}
+      {current ? <Workspace key={current.id} project={current} /> : <ProjectLauncher />}
     </>
   )
 }
