@@ -341,7 +341,9 @@ function SelectionStrip(): React.JSX.Element | null {
       {selected.slice(0, 6).map((i) => {
         const data = i.data as Record<string, unknown> | undefined
         const core = (data?.core ?? {}) as Record<string, unknown>
-        const kind = core.type ? String(core.type) : i.type === 'prompt' ? 'prompt' : i.type
+        const customName = (data?.name as string) || ''
+        const kind =
+          customName || (core.type ? String(core.type) : i.type === 'prompt' ? 'prompt' : i.type)
         return (
           <span
             key={i.id}

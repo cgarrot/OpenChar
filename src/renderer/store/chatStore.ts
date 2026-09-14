@@ -114,6 +114,7 @@ function selectionContext(): string | null {
       const loader = (data?.assetIds ?? []) as string[]
       return {
         id: i.id,
+        name: (data?.name as string) || undefined,
         type: core.type ?? i.type,
         params: core.params ?? (typeof data?.promptText === 'string' ? data.promptText : ''),
         ...(loader.length ? { assets: loader } : {}),
