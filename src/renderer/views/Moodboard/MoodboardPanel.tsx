@@ -621,16 +621,50 @@ function Board(): React.JSX.Element {
           e.preventDefault()
         }
       } else if (key === 'v') {
-        if (clipboard.current.length === 0) return
-        e.preventDefault()
-        pasteCount.current += 1
-        const shift = 32 * pasteCount.current
-        void duplicateItems(clipboard.current, { x: shift, y: shift })
+        if (clipboard.current.length > 0) {
+          e.preventDefault()
+          pasteCount.current += 1
+          const shift = 32 * pasteCount.current
+          void duplicateItems(clipboard.current, { x: shift, y: shift })
+          return
+        }
+        // No internal clipboard → try the SYSTEM clipboard for images (Ctrl+V from the web).
+        // navigator.clipboard.read() needs a user gesture; the keydown IS one.
+        void (async () => {
+          try {
+            const items = await navigator.clipboard.read()
+            const imageItem = items
+              .flatMap((ci) => ci.types.map((type) => ({ ci, type })))
+              .find(({ type }) => type.startsWith('image/'))
+            if (!imageItem) return
+            const blob = await imageItem.ci.getType(imageItem.type)
+            const file = new File([blob], `pasted-${Date.now()}.png`, { type: imageItem.type })
+            e.preventDefault()
+            const rect = wrapperRef.current?.getBoundingClientRect()
+            const { x, y } = screenToFlowPosition({
+              x: (rect?.left ?? 0) + (rect?.width ?? 800) / 2,
+              y: (rect?.top ?? 0) + (rect?.height ?? 600) / 2,
+            })
+            const res = await fetch(
+              `/upload?fileName=${encodeURIComponent(file.name)}&kind=${file.type}`,
+              { method: 'POST', body: file },
+            )
+            if (!res.ok) return
+            const asset = (await res.json()) as { id?: string }
+            if (!asset.id) return
+            await loadAssets()
+            const loader = await addLoader(x, y)
+            if (loader) await addLoaderAssets(loader.id, [asset.id])
+          } catch {
+            /* clipboard API indisponible ou pas d'image — comportement normal */
+          }
+        })()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [getNodes, duplicateItems, undo, redo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- screenToFlowPosition is a stable xyflow hook
+  }, [getNodes, duplicateItems, undo, redo, loadAssets, addLoader, addLoaderAssets])
 
   const centre = (): { x: number; y: number } => {
     const rect = wrapperRef.current?.getBoundingClientRect()
