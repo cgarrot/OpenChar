@@ -28,22 +28,8 @@ function ProjectTabs(): React.JSX.Element {
   const openByPath = useProjectStore((s) => s.openByPath)
   const loadRecents = useProjectStore((s) => s.loadRecents)
   const openFromDialog = useProjectStore((s) => s.openFromDialog)
+  const createProject = useProjectStore((s) => s.createProject)
   const [menuOpen, setMenuOpen] = useState(false)
-  if (tabs.length <= 1 && !menuOpen) {
-    // Un seul projet : pas de bruit — juste le « + » discret pour en ouvrir un autre.
-    return (
-      <button
-        onClick={() => {
-          void loadRecents()
-          setMenuOpen(true)
-        }}
-        className="rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:bg-panel hover:text-white"
-        title="Ouvrir un autre projet en onglet"
-      >
-        +
-      </button>
-    )
-  }
   return (
     <div className="flex min-w-0 items-center gap-1">
       <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
@@ -104,7 +90,18 @@ function ProjectTabs(): React.JSX.Element {
               }}
               className="mt-1 block w-full border-t border-border/60 px-2 pt-1.5 text-left text-xs text-zinc-500 hover:text-zinc-300"
             >
-              Parcourir…
+              📁 Parcourir…
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(false)
+                const name = window.prompt('Nom du nouveau projet :')
+                if (name && name.trim()) void createProject(name.trim())
+              }}
+              className="block w-full px-2 pt-1.5 text-left text-xs text-zinc-500 hover:text-zinc-300"
+              title="Créer un projet dans le dossier des projets"
+            >
+              ✚ Nouveau projet…
             </button>
           </div>
         )}
