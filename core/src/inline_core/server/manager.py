@@ -191,7 +191,18 @@ class RunManager:
         if self._store is not None:
             self._store.create(state, client_run_id)
         self._notify("queued", record)
-        self._pool.submit(self._execute, graph, target, record)
+        _fut = self._pool.submit(self._execute, graph, target, record)
+
+        def _report(f: object) -> None:
+            exc = getattr(f, "exception", lambda: None)()
+            if exc is not None:
+                import sys as _sys
+                import traceback as _tb
+
+                print(f"[mgr] _execute CRASHED: {exc!r}", file=_sys.stderr, flush=True)
+                _tb.print_exc(file=_sys.stderr)
+
+        _fut.add_done_callback(_report)
         return record, True
 
     def get(self, run_id: str) -> RunRecord | None:
@@ -241,6 +252,9 @@ class RunManager:
         return True
 
     def _execute(self, graph: Graph, target: str, record: RunRecord) -> None:
+        import sys as _sys
+
+        print(f"[mgr] _execute start {record.state.run_id}", file=_sys.stderr, flush=True)
         if record.cancel.cancelled:
             # Cancelled while still queued: skip the context entirely, but still land a terminal
             # state so subscribers are not left waiting on a run that will never start.

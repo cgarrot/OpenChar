@@ -344,6 +344,7 @@ export const IpcChannels = {
     stats: 'chat:stats',
     transcribe: 'chat:transcribe',
     forkResend: 'chat:forkResend',
+    forkRewind: 'chat:forkRewind',
     forkables: 'chat:forkables',
     archivedSessions: 'chat:archivedSessions',
     restoreSession: 'chat:restoreSession',
@@ -1043,6 +1044,8 @@ export interface InlineStudioApi {
       entryId: string,
       message: string,
     ): Promise<Result<{ id: string; forked: boolean }>>
+    /** Checkpoint rewind: fork just before a user message, no resend - the composer takes over. */
+    forkRewind(tabId: string, entryId: string): Promise<Result<{ id: string; forked: boolean }>>
     /** User messages available for forking: (entryId, text) pairs. */
     forkables(tabId: string): Promise<Result<Array<{ entryId: string; text: string }>>>
     /** Closed conversations still on disk, newest first. */

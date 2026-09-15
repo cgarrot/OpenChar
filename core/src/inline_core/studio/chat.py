@@ -483,6 +483,17 @@ class ChatBridge:
         await self.prompt(tab_id, str(message))
         return {"id": tab_id, "forked": True}
 
+    async def fork_rewind(self, tab_id: str, entry_id: str) -> dict[str, Any]:
+        """Checkpoint rewind: fork the session just before `entry_id` WITHOUT resending.
+        The UI puts the original text back in the composer - the user edits it or resends
+        as-is. Everything after that point is dropped from the active branch."""
+        tab = self._tab(tab_id)
+        await self._ensure_process(tab)
+        await self._command(tab, {"type": "fork", "entryId": str(entry_id)})
+        tab.refs_sent = ""  # the branch rewind may have dropped the refs injection
+        self._save_tabs()
+        return {"id": tab_id, "forked": True}
+
     async def forkables(self, tab_id: str) -> list[dict[str, Any]]:
         """User messages available for forking: (entryId, text) pairs."""
         tab = self._tab(tab_id)
@@ -1016,6 +1027,7 @@ def register_chat_handlers(rpc: Any, chat: ChatBridge) -> None:
     reg("chat:transcribe", lambda inp: chat.transcribe(inp))
     reg("chat:forkResend", lambda tab_id, entry_id, message: chat.fork_resend(tab_id, entry_id, message))
     reg("chat:forkables", lambda tab_id: chat.forkables(tab_id))
+    reg("chat:forkRewind", lambda tab_id, entry_id: chat.fork_rewind(tab_id, entry_id))
     reg("chat:archivedSessions", lambda limit=50: chat.archived_sessions(int(limit)))
     reg("chat:restoreSession", lambda file, title="": chat.restore_session(file, title))
     reg("chat:addRef", lambda tab_id, path: chat.add_ref(tab_id, path))

@@ -51,6 +51,8 @@ interface ChatState {
   steerQueued: (tabId: string) => Promise<void>
   /** Fork from a past user message and replay it verbatim on the fresh branch. */
   replayFrom: (entryId: string, text: string) => Promise<void>
+  /** Checkpoint: fork just before this message, put its text back in the composer. */
+  rewindTo: (entryId: string, original: string) => Promise<void>
   /** Closed conversations (newest first) + reopen. */
   archived: ChatArchivedSession[]
   loadArchived: () => Promise<void>
@@ -464,6 +466,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     await get().loadTabs()
     await get().selectTab(res.value.id)
+  },
+
+  rewindTo: async (entryId, original) => {
+    const activeId = get().activeId
+    if (!activeId) return
+    const res = await studio().chat.forkRewind(activeId, entryId)
+    if (!res.ok) {
+      set({ error: resultError(res) })
+      return
+    }
+    set({
+      threads: { ...get().threads, [activeId]: [] },
+      loaded: { ...get().loaded, [activeId]: false },
+      editing: { entryId, original },
+    })
+    get().setDraft(original)
   },
 
   replayFrom: async (entryId, text) => {

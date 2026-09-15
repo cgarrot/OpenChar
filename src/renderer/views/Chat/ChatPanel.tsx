@@ -187,6 +187,19 @@ function UserBubbleMenu({
               <button
                 onClick={() => {
                   setOpen(false)
+                  void useChatStore.getState().rewindTo(entryId, text)
+                }}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
+                title="Fork la session juste avant ce message - tout ce qui suit est abandonné, le texte revient dans le composer"
+              >
+                <span className="w-4 text-center">⏱</span>
+                Checkpoint : revenir à cet état
+              </button>
+            )}
+            {entryId && (
+              <button
+                onClick={() => {
+                  setOpen(false)
                   void useChatStore.getState().replayFrom(entryId, text)
                 }}
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11px] text-zinc-300 hover:bg-panel"
@@ -256,6 +269,75 @@ function AssistantBubbleMenu({ text }: { text: string }): React.JSX.Element {
             {copied ? 'Copié ✓' : 'Copier en bloc code'}
           </button>
         </div>
+      )}
+    </div>
+  )
+}
+
+/** Action bar right below the last message: copy the answer, fork back into the last
+ * question (editable), or duplicate the request for a fresh take. */
+function LastMessageBar(): React.JSX.Element | null {
+  const activeId = useChatStore((s) => s.activeId)
+  const state = useChatStore((s) => s.tabs.find((t) => t.id === activeId)?.state)
+  const thread = useChatStore((s) => (activeId ? s.threads[activeId] : undefined)) ?? NO_THREAD
+  const startEditing = useChatStore((s) => s.startEditing)
+  const replayFrom = useChatStore((s) => s.replayFrom)
+  const [copied, setCopied] = useState<'none' | 'copy'>('none')
+
+  if (!activeId || (state !== 'idle' && state !== undefined)) return null
+  // last user entry (forkable) + last assistant text (copyable)
+  let lastUser: { entryId: string; text: string } | null = null
+  let lastAnswer = ''
+  for (const e of thread) {
+    if (e.kind === 'user' && e.entryId) lastUser = { entryId: e.entryId, text: e.text }
+    if (e.kind === 'assistant' && !e.streaming) lastAnswer = e.text
+  }
+  if (!lastUser && !lastAnswer) return null
+
+  const btn =
+    'rounded px-2 py-0.5 text-[10px] text-zinc-500 transition-colors hover:bg-panel hover:text-zinc-200'
+  return (
+    <div className="flex items-center gap-1 px-1 pt-1 pb-2">
+      {lastAnswer && (
+        <button
+          className={btn}
+          title="Copier la dernière réponse"
+          onClick={() => {
+            void navigator.clipboard.writeText(lastAnswer).then(() => {
+              setCopied('copy')
+              setTimeout(() => setCopied('none'), 1500)
+            })
+          }}
+        >
+          {copied === 'copy' ? 'copié ✓' : '⧉ copier'}
+        </button>
+      )}
+      {lastUser && (
+        <button
+          className={btn}
+          title="Forquer : repartir de ce message (éditable) - la suite est abandonnée"
+          onClick={() => startEditing(lastUser!.entryId, lastUser!.text)}
+        >
+          ⎋ forquer
+        </button>
+      )}
+      {lastUser && (
+        <button
+          className={btn}
+          title="Dupliquer : renvoyer la même demande - nouvelle réponse"
+          onClick={() => void replayFrom(lastUser!.entryId, lastUser!.text)}
+        >
+          ↻ dupliquer
+        </button>
+      )}
+      {lastUser && (
+        <button
+          className={btn}
+          title="Checkpoint : revenir à cet état (fork sans renvoi)"
+          onClick={() => void useChatStore.getState().rewindTo(lastUser!.entryId, lastUser!.text)}
+        >
+          ⏱ checkpoint
+        </button>
       )}
     </div>
   )
@@ -1055,6 +1137,7 @@ export function ChatDock({
             <EntryView key={i} entry={entry} />
           ),
         )}
+        <LastMessageBar />
         {(activeState === 'streaming' || activeState === 'starting') && (
           <div className="flex items-center gap-2 px-1 text-[11px] text-zinc-400">
             <span className="flex gap-1">
