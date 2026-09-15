@@ -476,12 +476,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: resultError(res) })
       return
     }
+    // The branch is already rewound server-side: drop the cached thread, RELOAD it
+    // (selectTab re-reads history when loaded=false - without it the thread stays
+    // empty forever since no prompt follows), and just prefill the draft. NOT the
+    // editing state: editing re-forks on send, and the entryId is already gone
+    // from the rewound branch - sending must be a plain prompt.
     set({
       threads: { ...get().threads, [activeId]: [] },
       loaded: { ...get().loaded, [activeId]: false },
-      editing: { entryId, original },
+      editing: null,
     })
     get().setDraft(original)
+    await get().selectTab(activeId)
   },
 
   replayFrom: async (entryId, text) => {
