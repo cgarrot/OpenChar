@@ -674,6 +674,15 @@ class ChatBridge:
         tab = self._tabs.get(str(tab_id))
         if tab is None:
             raise ChatError(f"No chat tab {tab_id!r}.")
+        # Zombie recovery: a streaming state with a dead process can never receive its
+        # agent_end - the tab would wedge forever and every new message would queue.
+        # A Core restart kills the Pi children exactly this way.
+        if (
+            tab.state == "streaming"
+            and (tab.process is None or tab.process.returncode is not None)
+        ):
+            tab.state = "stopped"
+            self._save_tabs()
         return tab
 
     async def _ensure_process(self, tab: _Tab) -> None:
@@ -721,6 +730,8 @@ class ChatBridge:
             tab.last_error = f"pi n'a pas démarré: {error}"
             self._emit(tab, {"kind": "state"})
             raise ChatError(tab.last_error) from None
+        # A freshly (re)spawned process cannot be mid-stream: if the tab kept a streaming
+        # state from the dead process, the respawn settles it here.
         tab.state = "idle"
         self._emit(tab, {"kind": "state"})
 
