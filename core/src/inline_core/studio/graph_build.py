@@ -194,10 +194,21 @@ def _item_to_node(
 ) -> dict[str, Any] | None:
     data = item.get("data") or {}
     if item["type"] == "core" and data.get("core"):
+        params = dict(data["core"].get("params") or {})
+        # A node's params may carry an id-based asset ref (API/agent-created input nodes);
+        # the pipeline's canonical form is a concrete path - resolve it here, where the
+        # project DB is at hand. Runners and extensions only ever see ref:"path".
+        asset = params.get("asset")
+        if isinstance(asset, dict) and asset.get("ref") == "asset" and asset.get("id"):
+            resolved = resolve_asset_path(str(asset["id"]))
+            if resolved:
+                params["asset"] = {"ref": "path", "path": resolved}
+        elif isinstance(asset, str) and asset.strip():
+            params["asset"] = {"ref": "path", "path": asset.strip()}
         return {
             "id": item["id"],
             "type": data["core"]["type"],
-            "params": data["core"].get("params") or {},
+            "params": params,
             "inputs": _edges_for(item["id"], connectors, by_id, is_list_port, fanned_out),
         }
     # Training nodes carry their selection in item data, not in a core param blob: a dataset is a

@@ -41,14 +41,14 @@ class ImageInputRunner(NodeRunner):
     produces_takes = False
 
     def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
-        return NodeResult(outputs={"image": _asset_ref(node.params.get("asset"))})
+        return NodeResult(outputs={"image": _asset_ref(node.params.get("asset") or node.params.get("path"))})
 
 
 class VideoInputRunner(NodeRunner):
     produces_takes = False
 
     def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
-        return NodeResult(outputs={"video": _asset_ref(node.params.get("asset"))})
+        return NodeResult(outputs={"video": _asset_ref(node.params.get("asset") or node.params.get("path"))})
 
 
 def _asset_ref(raw: Any) -> AssetRef:
@@ -58,6 +58,10 @@ def _asset_ref(raw: Any) -> AssetRef:
             return AssetRef(ref="asset", id=str(raw.get("id", "")))
         if ref == "path":
             return AssetRef(ref="path", path=str(raw.get("path", "")))
+    elif isinstance(raw, str) and raw.strip():
+        # A flat filesystem path (agent-created node or legacy board): accept it as a
+        # path ref instead of failing the whole run.
+        return AssetRef(ref="path", path=raw.strip())
     raise ComponentError("An image input node needs a valid asset reference.")
 
 
